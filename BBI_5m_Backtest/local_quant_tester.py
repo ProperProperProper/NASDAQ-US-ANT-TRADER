@@ -184,7 +184,10 @@ def charts(x: pd.DataFrame, trades: list[Trade], equity: pd.DataFrame) -> dict[s
     plt.rcParams.update({"font.size": 9, "axes.titlesize": 13, "axes.labelsize": 9})
     fig, (ax, ax2, ax3) = plt.subplots(3, 1, figsize=(16, 10), sharex=True,
         gridspec_kw={"height_ratios": [4, .55, 1.25], "hspace": .06})
-    ax.plot(x.index, x.close, label="APP close", color="#172b4d", linewidth=1.05)
+    symbol = str(x.attrs.get("symbol", "UNKNOWN"))
+    interval_minutes = int(x.attrs.get("interval_minutes", 10))
+    interval_label = "daily" if interval_minutes == 1440 else f"{interval_minutes}-minute"
+    ax.plot(x.index, x.close, label=f"{symbol} close", color="#172b4d", linewidth=1.05)
     fast_label = f"EMA {x.attrs.get('fast', '')}".strip()
     slow_label = f"EMA {x.attrs.get('slow', '')}".strip()
     ax.plot(x.index, x.ema_fast, label=fast_label, color="#168aad", linewidth=1.0)
@@ -203,7 +206,7 @@ def charts(x: pd.DataFrame, trades: list[Trade], equity: pd.DataFrame) -> dict[s
         ax.scatter(pd.Timestamp(t.exit_time), t.exit_price, marker="v", color="#d62839", edgecolors="white", linewidths=.5, s=42, zorder=5)
     params = x.attrs.get("params", {})
     gate_label = " · causal downtrend gate" if params.get("downtrend_filter", True) else ""
-    ax.set_title(f"US.APP · 10-minute Donchian / EMA {x.attrs.get('fast', '?')}/{x.attrs.get('slow', '?')}{gate_label}")
+    ax.set_title(f"{symbol} · {interval_label} Donchian / EMA {x.attrs.get('fast', '?')}/{x.attrs.get('slow', '?')}{gate_label}")
     ax.set_ylabel("Price"); ax.legend(loc="upper left", ncol=4, framealpha=.92)
     ax.grid(axis="y", alpha=.18); ax.spines[["top", "right"]].set_visible(False)
     ax2.set_ylim(0, 1); ax2.set_yticks([]); ax2.set_ylabel("Regime", rotation=0, labelpad=28, va="center")

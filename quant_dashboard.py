@@ -180,6 +180,8 @@ def do_backtest(payload: dict[str, Any], progress=None) -> dict[str, Any]:
     frame = load_candles(symbol, interval, warmup_start.strftime("%Y-%m-%d"), f"{end}T23:59:59")
     if frame.empty:
         raise ValueError("No cached Moomoo candles found after the fetch")
+    frame.attrs["symbol"] = symbol
+    frame.attrs["interval_minutes"] = interval
     # Every displayed result is stitched from unseen walk-forward folds. There
     # is no full-period in-sample fallback, even if the checkbox is unticked.
     optimisation = optimize(frame, base, capital, allocation, slip, commission, progress) if payload.get("optimize", True) else []

@@ -100,7 +100,14 @@ def run(candles: pd.DataFrame, params: dict = BASELINE, capital: float = 100000.
             if reason:
                 exit_price = exit_raw * (1 - slip); gross = (exit_price - entry) * position["qty"]; costs = commission * 2; net = gross - costs; cash += position["qty"] * exit_price - costs
                 trades.append(Trade(position["signal_time"].isoformat(), position["entry_time"].isoformat(), entry, position["qty"], exit_time.isoformat(), exit_price, gross, costs, net, net / (entry * position["qty"]) * 100, reason)); position = None; continue
-        allowed = stamp.time() < SESSION_END and next_stamp.date() == stamp.date() and next_stamp.time() < SESSION_END
+        # Intraday Moomoo bars must have a same-session next bar. Daily ASX
+        # bars are timestamped at midnight and execute on the next trading
+        # day's open, so the intraday same-date test would reject every entry.
+        daily_bars = stamp.time() == time(0, 0) and next_stamp.time() == time(0, 0)
+        allowed = (
+            daily_bars
+            or (stamp.time() < SESSION_END and next_stamp.date() == stamp.date() and next_stamp.time() < SESSION_END)
+        )
         gate_on = bool(params.get("downtrend_filter", True))
         if position is None and allowed and bool(bar.breakout) and (not gate_on or not bool(bar.downtrend_blocked)):
             entry = float(next_bar.open) * (1 + slip); qty = math.floor(cash * allocation / entry)
