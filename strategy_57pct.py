@@ -14,7 +14,14 @@ import numpy as np
 import pandas as pd
 
 
-BASELINE = {"lookback": 33, "fast": 17, "slow": 26, "tp": 0.0274, "stop": 0.1324}
+BASELINE = {
+    "lookback": 33, "fast": 17, "slow": 26,
+    # Exact Moomoo Quant exit defaults.
+    "tp": 0.1069, "stop": 0.0354,
+    "break_even_trigger": 0.02, "break_even_lock": 0.002,
+    "profit_lock_trigger": 0.08, "profit_lock": 0.01,
+    "trail_trigger": 0.06, "trail_pct": 0.02,
+}
 ALLOCATION = 0.95
 SESSION_END = time(15, 45)
 
@@ -41,7 +48,9 @@ def add_features(candles: pd.DataFrame, params: dict = BASELINE) -> pd.DataFrame
     x["ema_slow"] = close.ewm(span=int(params["slow"]), adjust=False).mean()
     x["prior_high"] = x["high"].shift(1).rolling(int(params["lookback"])).max()
     x["breakout"] = ((close > x["prior_high"]) & (x["ema_fast"] > x["ema_slow"]) & (close > x["ema_slow"])).fillna(False)
-    x["trend_exit"] = ((close < x["ema_slow"]) & (x["ema_fast"] < x["ema_slow"])).fillna(False)
+    x["yellow_exit"] = ((close < x["ema_fast"]) & (close >= x["ema_slow"]) & (x["ema_fast"] > x["ema_slow"])).fillna(False)
+    x["red_exit"] = (close < x["ema_slow"]).fillna(False)
+    x["trend_exit"] = (x["red_exit"] & (x["ema_fast"] < x["ema_slow"])).fillna(False)
     # Causal downtrend gate: every input is known at the completed signal bar.
     # It requires agreement between slow-EMA drift, log-price regression drift,
     # and distance from the recent peak, so a normal pullback does not get
@@ -78,7 +87,7 @@ def strategy_signal(frame: pd.DataFrame, params: dict = BASELINE) -> dict:
         raise ValueError("not enough completed candles")
     bar = x.iloc[-2]
     bar_time = pd.Timestamp(x.index[-2]).time()
-    return {"bar": str(x.index[-2]), "close": float(bar.close), "ema_fast": float(bar.ema_fast), "ema_slow": float(bar.ema_slow), "raw_long_signal": bool(bar.breakout), "downtrend_blocked": bool(bar.downtrend_blocked), "long_signal": bool(bar.breakout) and not bool(bar.downtrend_blocked), "trend_exit": bool(bar.trend_exit), "entry_allowed": bar_time < time(15, 40), "session_exit": bar_time >= time(15, 40)}
+    return {"bar": str(x.index[-2]), "close": float(bar.close), "ema_fast": float(bar.ema_fast), "ema_slow": float(bar.ema_slow), "raw_long_signal": bool(bar.breakout), "downtrend_blocked": bool(bar.downtrend_blocked), "long_signal": bool(bar.breakout) and not bool(bar.downtrend_blocked), "yellow_exit": bool(bar.yellow_exit), "red_exit": bool(bar.red_exit), "trend_exit": bool(bar.trend_exit), "entry_allowed": bar_time < time(15, 40), "session_exit": bar_time >= time(15, 40)}
 
 
 def run(candles: pd.DataFrame, params: dict = BASELINE, capital: float = 100000.0, allocation: float = ALLOCATION, slippage_bps: float = 2.0, commission: float = 0.0, evaluation_start=None):
@@ -90,13 +99,28 @@ def run(candles: pd.DataFrame, params: dict = BASELINE, capital: float = 100000.
         mark = cash + (position["qty"] * float(bar.close) if position else 0.0)
         equity_rows.append({"date": stamp, "equity": mark})
         if position:
-            entry = position["entry"]; target = entry * (1 + params["tp"]); stop = entry * (1 - params["stop"])
-            reason = None; exit_raw = None; exit_time = stamp
-            if float(bar.open) >= target: exit_raw, reason = float(bar.open), "TP_GAP"
-            elif float(bar.low) <= stop: exit_raw, reason = stop, "STOP"
-            elif float(bar.high) >= target: exit_raw, reason = target, "TP"
-            elif stamp.time() >= SESSION_END: exit_raw, reason = float(bar.close), "END_OF_SESSION"
-            elif bool(bar.trend_exit): exit_raw, reason, exit_time = float(next_bar.open), "TREND_EXIT", next_stamp
+            entry = position["entry"]
+            price = float(bar.close)
+            position["peak_price"] = max(position["peak_price"], price, entry)
+            if price >= entry * float(params.get("break_even_trigger", 0.02)) + entry:
+                position["break_even_armed"] = True
+            if position["peak_price"] >= entry * (1 + float(params.get("profit_lock_trigger", 0.08))):
+                position["profit_lock_armed"] = True
+            stop = entry * (1 - float(params.get("stop", 0.0354)))
+            if position["break_even_armed"]:
+                stop = max(stop, entry * (1 + float(params.get("break_even_lock", 0.002))))
+            if position["profit_lock_armed"]:
+                stop = max(stop, entry * (1 + float(params.get("profit_lock", 0.01))))
+            if position["peak_price"] >= entry * (1 + float(params.get("trail_trigger", 0.06))):
+                stop = max(stop, position["peak_price"] * (1 - float(params.get("trail_pct", 0.02))))
+            target = entry * (1 + float(params.get("tp", 0.1069)))
+            take_profit = price >= target
+            stop_loss = price <= stop
+            reason = None; exit_raw = None; exit_time = next_stamp
+            if take_profit: exit_raw, reason = float(next_bar.open), "TP"
+            elif stop_loss: exit_raw, reason = float(next_bar.open), "STOP"
+            elif bool(bar.yellow_exit): exit_raw, reason = float(next_bar.open), "YELLOW_EXIT"
+            elif bool(bar.red_exit): exit_raw, reason = float(next_bar.open), "RED_EXIT"
             if reason:
                 exit_price = exit_raw * (1 - slip); gross = (exit_price - entry) * position["qty"]; costs = commission * 2; net = gross - costs; cash += position["qty"] * exit_price - costs
                 trades.append(Trade(position["signal_time"].isoformat(), position["entry_time"].isoformat(), entry, position["qty"], exit_time.isoformat(), exit_price, gross, costs, net, net / (entry * position["qty"]) * 100, reason)); position = None; continue
@@ -111,7 +135,7 @@ def run(candles: pd.DataFrame, params: dict = BASELINE, capital: float = 100000.
         gate_on = bool(params.get("downtrend_filter", True))
         if position is None and allowed and bool(bar.breakout) and (not gate_on or not bool(bar.downtrend_blocked)):
             entry = float(next_bar.open) * (1 + slip); qty = math.floor(cash * allocation / entry)
-            if qty > 0: cash -= qty * entry + commission; position = {"signal_time": stamp, "entry_time": next_stamp, "entry": entry, "qty": qty}
+            if qty > 0: cash -= qty * entry + commission; position = {"signal_time": stamp, "entry_time": next_stamp, "entry": entry, "qty": qty, "peak_price": entry, "break_even_armed": False, "profit_lock_armed": False}
     if position and rows:
         stamp, bar = rows[-1]; exit_price = float(bar.close) * (1 - slip); gross = (exit_price - position["entry"]) * position["qty"]; costs = commission * 2; net = gross - costs; cash += position["qty"] * exit_price - costs
         trades.append(Trade(position["signal_time"].isoformat(), position["entry_time"].isoformat(), position["entry"], position["qty"], stamp.isoformat(), exit_price, gross, costs, net, net / (position["entry"] * position["qty"]) * 100, "MARK_TO_MARKET"))
