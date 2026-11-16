@@ -1,19 +1,20 @@
 # Moomoo Paper Trading Bot & Walk-Forward Quant Dashboard
 
 Open-source Moomoo OpenD paper-trading system for US.APP with a local SQLite
-market-data cache, 10-minute Donchian breakout and EMA trend strategy,
+market-data cache, selectable candle intervals, and a causal daily candle-open grid-cross strategy,
 walk-forward-only parameter optimization, risk APIs, audit logs, and a browser
 dashboard. Designed for research and paper competitions on macOS Apple Silicon.
 
 **Keywords:** Moomoo paper trading bot, Moomoo OpenD API, quantitative trading,
-algorithmic trading, APP stock, Donchian breakout, EMA strategy, walk-forward
+algorithmic trading, APP stock, price grid strategy, candle open crossing, walk-forward
 optimization, SQLite market data, paper trading dashboard, Apple Silicon, Rust.
 
 > Research and paper trading only. This project does not provide financial
 > advice and does not guarantee performance. Live trading is intentionally not
 > supported by the dashboard.
 
-Research and backtesting code for a long-only intraday Donchian breakout strategy with an EMA trend filter.
+Research and backtesting code for a long-only daily price-grid strategy driven
+only by candle-open crossings.
 
 ## Highlights
 
@@ -22,27 +23,32 @@ Research and backtesting code for a long-only intraday Donchian breakout strateg
   scored only on the next unseen fold.
 - Shared strategy, data, risk, audit, and execution interfaces in
   `quant_api.py`.
-- Paper execution code is retained for reference but disabled; the dashboard is tester-only.
+- Paper execution is restricted to the configured Moomoo SIMULATE account; live
+  trading is not enabled by the dashboard.
 - Local dashboard for charts, trades, optimizer progress, risk decisions, and
   execution status.
 - Apple-Silicon-oriented Rust control-plane work in `thomas-ai/`.
 
-## 2 bps baseline
+## Candle-open grid baseline
 
-The current benchmark uses completed 10-minute candles and enters at the next candle open:
+The active strategy uses the prior completed daily candles to calculate a rolling top
+and bottom. Two evenly spaced grid lines are inserted between them. It plots
+only candle open, candle close, and those four price-grid lines:
 
 | Setting | Value |
 |---|---:|
-| Donchian lookback | 45 candles |
-| Fast EMA | 8 |
-| Slow EMA | 89 |
-| Take profit | 6.38% |
-| Stop loss | 3.95% |
+| Grid lookback | 45 completed daily candles |
+| Grid levels | Top, 2/4 midpoint, 1/4 midpoint, bottom |
+| Entry | Candle open crosses upward through any grid level |
+| Exit | Candle open crosses downward through any grid level while long |
+| Other indicators | None; no EMA, ATR, take-profit, stop, or trailing exit |
 | Slippage | 2 bps per side |
 | Position | Long only, one position |
-| Session handling | Flat before the close |
 
-Saved US.APP results for the benchmark: 78 trades, 59.0% win rate, 44.01% sum of trade returns, 51.53% compounded return, and 11.10% maximum drawdown.
+This is the research baseline, not a claim about the currently selected paper-bot
+interval. The live paper bot defaults to 10-minute candles; the supported
+intervals and operational limits are documented in
+[`docs/PAPER_BOT_OPERATIONS.md`](docs/PAPER_BOT_OPERATIONS.md).
 
 The 2 bps figure is an execution assumption, not a guarantee. Results depend on the data vendor, fills, commissions, liquidity, and date range.
 
@@ -59,32 +65,10 @@ The 2 bps figure is an execution assumption, not a guarantee. Results depend on 
 - `BBI_5m_Backtest/US_APP_donchian_ema_research.json` — latest robustness report.
 - `BBI_5m_Backtest/bhp_profit_lock_daily_backtest.py` — daily ASX BHP backtester for the exact profit-lock/yellow-exit strategy, including optimization.
 - `BBI_5m_Backtest/local_quant_tester.py` — local Quant-style engine and self-contained HTML report with price/trade, equity, drawdown, monthly-return, and trade tables.
+- `Moomoo_Quant_GridOpenCross_1D.py` — Moomoo daily strategy with only candle open/close and four price-grid levels.
 - `BBI_5m_Backtest/local_quant_portal.py` — local browser portal for selecting ASX 200 symbols, rerunning the optimizer, and viewing charts/stats.
 
 Moomoo OpenD must be running on `127.0.0.1:11111` to fetch fresh candles. Do not commit API keys or credentials; use the macOS Keychain or environment variables locally.
-
-## NVIDIA API models
-
-`nvidia_api.py` provides a dependency-free chat client for NVIDIA's
-OpenAI-compatible endpoint (`https://integrate.api.nvidia.com/v1`). By default it
-reads the secret from the macOS Keychain service `NVIDIA_API_KEY` and uses
-`deepseek-ai/deepseek-v4.1-flash`:
-
-```sh
-python3 nvidia_api.py "Summarize the current research results"
-```
-
-If the existing Keychain entry uses another service or account, set only the
-metadata needed to locate it; the secret itself is never printed:
-
-```sh
-NVIDIA_KEYCHAIN_SERVICE="your-service" \\
-NVIDIA_KEYCHAIN_ACCOUNT="your-account" \\
-python3 nvidia_api.py "Summarize the current research results"
-```
-
-You can select another model with `--model` or `NVIDIA_MODEL`. The client is
-separate from live trading and does not place orders.
 
 ## Thomas AI
 
@@ -93,12 +77,6 @@ the gateway, routing, UI serving, CLI, NVIDIA Keychain access, and process
 orchestration, with MLX-LM retained as the Python runtime boundary. It routes
 ordinary prompts to local MLX and difficult prompts to the configured NVIDIA
 API model. See [THOMAS_AI.md](THOMAS_AI.md).
-
-## Local AI Harbor gateway
-
-`local_ai_harbor.py` provides one OpenAI-compatible endpoint for local MLX
-inference with optional NVIDIA NIM routing. See `LOCAL_AI_HARBOR.md` for setup.
-Local MLX is the default; NVIDIA cloud fallback must be explicitly enabled.
 
 ## Research note
 
@@ -112,8 +90,9 @@ This is research software, not financial advice or a promise of future performan
 
 ## Moomoo paper-competition bot
 
-`competition_bot.py` is retained as an execution boundary, but paper execution
-is currently hard-disabled while the tester is being validated.
+`competition_bot.py` is the paper-execution boundary. The installed launchd job
+runs US.APP against the explicit Moomoo SIMULATE account `COMPETITION_ACCOUNT_ID`, with a
+10-minute bar interval by default. The bot does not place live orders.
 
 Start Moomoo OpenD and log in, then identify the US paper account index:
 
@@ -124,16 +103,17 @@ python3 competition_bot.py --list-accounts
 Run a signal-only check:
 
 ```sh
-python3 competition_bot.py AAPL NVDA --acc-index 0
+python3 competition_bot.py APP --acc-id COMPETITION_ACCOUNT_ID --bar-interval 10 --live-paper
 ```
 
-The dashboard and CLI reject paper-order startup in the current tester-only
-build. No order path is enabled.
+Use the dashboard or launchd service for normal operation. See
+[`docs/PAPER_BOT_OPERATIONS.md`](docs/PAPER_BOT_OPERATIONS.md) for checks and
+troubleshooting.
 
 ## Moomoo Quant Dashboard
 
-`quant_dashboard.py` combines the tester, optimizer, charts, and trade list in
-one local dashboard. Paper execution controls are hidden and disabled:
+`quant_dashboard.py` combines the tester, optimizer, charts, trade list, and
+paper-bot controls in one local dashboard. It binds to loopback only:
 
 ```sh
 python3 quant_dashboard.py
@@ -142,12 +122,13 @@ open http://127.0.0.1:8780
 
 The dashboard fetches `US.APP` candles directly from Moomoo OpenD with
 `request_history_kline`, caches them in `quant_dashboard.sqlite3`, and uses
-those cached candles for the tester. It stores each run, optimizer result,
+those cached candles for the tester. A test is limited to 30 calendar days of
+scored data and adds a strategy warm-up period before that window. The Stop
+tester button cancels an active run. It stores each run, optimizer result,
 trade, and paper execution event in SQLite. The dashboard reports return,
 ending equity, maximum drawdown, trades, win rate, profit factor, average
 trade, Sharpe approximation, equity curve, monthly returns, optimizer
-rankings, and the complete trade list. No paper order placement is enabled in
-this build.
+rankings, and the complete trade list. Paper mode remains SIMULATE-only.
 
 For an ASX BHP test, export daily candles from Moomoo Quant and run:
 
