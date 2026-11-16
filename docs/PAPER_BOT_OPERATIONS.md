@@ -17,6 +17,37 @@ macOS services used to run it.
 The dashboard is loopback-only and is not exposed on the LAN. Moomoo OpenD is a
 separate local service.
 
+## OpenD setup
+
+1. Install Moomoo OpenD from the official Moomoo/Futu distribution for macOS.
+2. Open OpenD and sign in to the intended Moomoo account.
+3. Confirm OpenD's local API server is enabled on `127.0.0.1:11111`.
+4. Confirm the port is listening:
+
+   ```sh
+   nc -z 127.0.0.1 11111
+   ```
+
+5. From this repository, list the accounts visible through OpenD:
+
+   ```sh
+   python3 competition_bot.py --list-accounts
+   ```
+
+6. Use the SIMULATE account. The installed service is pinned to account
+   `COMPETITION_ACCOUNT_ID`; the bot refuses non-SIMULATE trading environments.
+7. Start or restart the local dashboard after OpenD is ready, then verify:
+
+   ```sh
+   curl -s http://127.0.0.1:8780/api/health
+   curl -s http://127.0.0.1:8780/api/status
+   ```
+
+The bot uses `OpenQuoteContext` for market data and `OpenSecTradeContext` for
+paper execution, both connected to `127.0.0.1:11111`. If OpenD is closed,
+logged out, or listening on another port, candle fetches and account operations
+fail rather than silently using static data.
+
 ## Supported candle intervals
 
 The bot and dashboard accept `1`, `3`, `5`, `10`, `15`, `30`, `60`, `120`,
@@ -66,7 +97,7 @@ date window, costs, and strategy settings are the same.
 
 ## Troubleshooting
 
-1. Confirm Moomoo OpenD is logged in and listening on `127.0.0.1:11111`.
+1. Confirm Moomoo OpenD is installed, logged in, and listening on `127.0.0.1:11111`.
 2. Check `/api/health` and `/api/status`.
 3. Inspect the launchd job with `launchctl print` and its configured logs.
 4. Run `./watch_moomoo_paper_stack.sh`; zero means the local stack passed.

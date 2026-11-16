@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Local Moomoo-style tester/optimizer dashboard with paper execution.
+"""Local Moomoo-backed tester/optimizer dashboard with paper execution.
 
-The backtest side accepts Moomoo-exported OHLC CSV/Parquet files and reuses the
-project's local Quant-style engine. The execution side starts the local bot
-with TrdEnv.SIMULATE only; it refuses accounts that are not reported as
-SIMULATE by OpenD.
+The backtest side fetches interval-specific US.APP candles from Moomoo OpenD,
+stores them in SQLite, and evaluates the bounded test window. The execution
+side starts the local bot with TrdEnv.SIMULATE only; it refuses accounts that
+are not reported as SIMULATE by OpenD.
 
 Run:
     python3 quant_dashboard.py
