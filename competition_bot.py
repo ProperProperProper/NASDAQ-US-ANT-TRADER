@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Moomoo paper-competition bot for the 10-minute Donchian/EMA baseline.
+"""Moomoo paper-competition bot for the US.APP causal price-grid strategy.
 
 The bot is paper-only by construction: every order uses TrdEnv.SIMULATE.
 Order submission additionally requires --live-paper. Without that flag the
 bot prints signals and intended orders but never submits anything.
 
 Strategy:
-  - 45 completed 10-minute bars for the Donchian breakout
-  - EMA 8 / EMA 89 trend filter
+  - 45 completed bars for the causal price-grid signal
   - long-only, one position per symbol
-  - 6.38% take profit or 3.95% stop loss
+  - paper-only risk and execution controls
   - 95% of available cash per entry
 
 Moomoo OpenD must be running on 127.0.0.1:11111 and logged in. This script
