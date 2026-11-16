@@ -23,8 +23,9 @@ import json
 import logging
 import math
 import signal
+import socket
 import time
-from datetime import time as dt_time
+from datetime import datetime, timedelta, time as dt_time
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,21 @@ from quant_api import audit_api, risk_api, strategy_api
 POSITION_FRACTION = 0.95
 POLL_SECONDS = 30
 MIN_BARS = 89 + 45 + 5
+OPEN_D_SOCKET_TIMEOUT_SECONDS = 20
+DEFAULT_BAR_INTERVAL = 10
+BAR_INTERVAL_TYPES = {
+    1: KLType.K_1M,
+    3: KLType.K_3M,
+    5: KLType.K_5M,
+    10: KLType.K_10M,
+    15: KLType.K_15M,
+    30: KLType.K_30M,
+    60: KLType.K_60M,
+    120: KLType.K_120M,
+    180: KLType.K_180M,
+    240: KLType.K_240M,
+    1440: KLType.K_DAY,
+}
 STATE_PATH = Path(__file__).with_name("competition_bot_state.json")
 LOG_PATH = Path(__file__).with_name("competition_bot.log")
 
@@ -57,6 +73,7 @@ def setup_logging() -> None:
         format="%(asctime)s %(levelname)s %(message)s",
         handlers=[logging.FileHandler(LOG_PATH), logging.StreamHandler()],
     )
+    socket.setdefaulttimeout(OPEN_D_SOCKET_TIMEOUT_SECONDS)
 
 
 def scalar(value: Any, default: float = 0.0) -> float:
@@ -80,14 +97,15 @@ def code(symbol: str) -> str:
 
 
 class CompetitionBot:
-    def __init__(self, symbols: list[str], acc_index: int, live_paper: bool, interval: int, acc_id: int | None = None) -> None:
-        if live_paper:
-            raise RuntimeError("Paper trading is disabled; tester-only mode is active")
+    def __init__(self, symbols: list[str], acc_index: int, live_paper: bool, interval: int, acc_id: int | None = None, bar_interval: int = DEFAULT_BAR_INTERVAL) -> None:
+        if bar_interval not in BAR_INTERVAL_TYPES:
+            raise ValueError(f"unsupported bar interval: {bar_interval}")
         self.symbols = [code(s) for s in symbols]
         self.acc_index = acc_index
         self.acc_id = acc_id
         self.live_paper = live_paper
         self.interval = interval
+        self.bar_interval = bar_interval
         self.running = True
         self.last_error: str | None = None
         self.peak_price = 0.0
@@ -151,15 +169,22 @@ class CompetitionBot:
         return row_value(data, 0, ("last_price", "cur_price"))
 
     def candles(self, symbol: str) -> pd.DataFrame:
+        now = datetime.now()
+        start = (now - timedelta(days=14)).strftime("%Y-%m-%d")
+        end = (now + timedelta(days=1)).strftime("%Y-%m-%d")
         ret, data, _ = self.quote.request_history_kline(
             symbol,
-            ktype=KLType.K_10M,
-            max_count=MIN_BARS + 20,
+            start=start,
+            end=end,
+            ktype=BAR_INTERVAL_TYPES[self.bar_interval],
+            max_count=1000,
             extended_time=False,
         )
         if ret != RET_OK:
             raise RuntimeError(f"candle query failed for {symbol}: {data}")
-        save_candles(data.set_index("time_key"), symbol, 10)
+        if len(data) > MIN_BARS + 20:
+            data = data.tail(MIN_BARS + 20).reset_index(drop=True)
+        save_candles(data.set_index("time_key"), symbol, self.bar_interval)
         return data
 
     def submit(self, symbol: str, side: Any, qty: int, reason: str) -> None:
@@ -185,12 +210,18 @@ class CompetitionBot:
     def tick(self) -> None:
         for symbol in self.symbols:
             try:
+                logging.info("poll begin symbol=%s", symbol)
+                logging.info("requesting candles symbol=%s", symbol)
                 signal_data = strategy_api.signal(self.candles(symbol))
                 if self.state["last_bar"].get(symbol) == signal_data["bar"]:
+                    logging.info("no new completed bar symbol=%s bar=%s", symbol, signal_data["bar"])
                     continue
+                logging.info("querying position symbol=%s", symbol)
                 qty, avg = self.position(symbol)
+                logging.info("querying snapshot symbol=%s", symbol)
                 price = self.market_price(symbol)
-                logging.info("%s bar=%s price=%.4f position=%.4f signal=%s trend_exit=%s", symbol, signal_data["bar"], price, qty, signal_data["long_signal"], signal_data["trend_exit"])
+                exit_signal = bool(signal_data.get("exit_signal", signal_data.get("trend_exit", False)))
+                logging.info("%s bar=%s price=%.4f position=%.4f signal=%s exit=%s", symbol, signal_data["bar"], price, qty, signal_data["long_signal"], exit_signal)
 
                 pending = self.state["pending"].get(symbol)
                 if pending:
@@ -205,8 +236,8 @@ class CompetitionBot:
                 if qty > 0:
                     take_profit = price >= avg * 1.0274
                     stop_loss = price <= avg * (1 - 0.1324)
-                    session_exit = bool(signal_data["session_exit"])
-                    if take_profit or stop_loss or session_exit or signal_data["trend_exit"]:
+                    session_exit = bool(signal_data.get("session_exit", False))
+                    if take_profit or stop_loss or session_exit or exit_signal:
                         self.submit(symbol, TrdSide.SELL, int(qty), "EXIT")
                         self.state["pending"][symbol] = "SELL"
                         self.peak_price = 0.0
@@ -239,7 +270,7 @@ class CompetitionBot:
                 save_execution_event("CYCLE_ERROR", symbol, {"paper": True, "error": repr(exc)})
 
     def run(self) -> None:
-        logging.info("starting %s symbols=%s account_index=%d", "LIVE_PAPER" if self.live_paper else "DRY_RUN", self.symbols, self.acc_index)
+        logging.info("starting %s symbols=%s account_id=%s bar_interval=%dm poll_seconds=%d", "LIVE_PAPER" if self.live_paper else "DRY_RUN", self.symbols, self.acc_id, self.bar_interval, self.interval)
         while self.running:
             self.tick()
             for _ in range(self.interval):
@@ -266,7 +297,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("symbols", nargs="*", help="US symbols, e.g. AAPL NVDA; defaults to config only when supplied")
     parser.add_argument("--acc-index", type=int, default=0, help="SIMULATE US account index from --list-accounts")
+    parser.add_argument("--acc-id", type=int, default=None, help="Explicit SIMULATE account ID; preferred over account index")
     parser.add_argument("--interval", type=int, default=POLL_SECONDS)
+    parser.add_argument("--bar-interval", type=int, default=DEFAULT_BAR_INTERVAL, choices=sorted(BAR_INTERVAL_TYPES), help="Moomoo candle interval in minutes")
     parser.add_argument("--live-paper", action="store_true", help="Actually submit TrdEnv.SIMULATE orders")
     parser.add_argument("--list-accounts", action="store_true")
     args = parser.parse_args()
@@ -275,7 +308,7 @@ def main() -> int:
         return list_accounts()
     if not args.symbols:
         parser.error("provide at least one symbol, or use --list-accounts")
-    bot = CompetitionBot(args.symbols, args.acc_index, args.live_paper, args.interval)
+    bot = CompetitionBot(args.symbols, args.acc_index, args.live_paper, args.interval, acc_id=args.acc_id, bar_interval=args.bar_interval)
     signal.signal(signal.SIGINT, bot.stop)
     signal.signal(signal.SIGTERM, bot.stop)
     try:
