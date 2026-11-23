@@ -56,6 +56,7 @@ The 2 bps figure is an execution assumption, not a guarantee. Results depend on 
 - `market_data.py` — local Moomoo 1-minute ingestion used by native research.
 - `DesktopApp.swift` — native macOS AppKit GUI source for runtime status, paper-bot controls, and interval research.
 - `ai_gateway/` — bundled Rust Multi-Model AI Gateway and its MCP bridge; the strategy lab no longer depends on a sibling project.
+- `docs/AI_ENGINEERING_CONTROLS.md` — provider-neutral AI safety, tool, prompt, evaluation, and release controls.
 - `scripts/app_minute_interval_sweep.py` — US.ANT 1m-through-21m research sweep built from the single 1m cache and limited to the latest 5 sessions.
 - `ops/start_ai_gateway.sh` — starts the bundled gateway on `127.0.0.1:8788`.
 - `quant_storage.py` — SQLite candle, run, trade, and event storage.

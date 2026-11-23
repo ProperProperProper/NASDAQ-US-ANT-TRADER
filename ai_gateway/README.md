@@ -86,9 +86,14 @@ The scan writes `graphify-out/graph.json`, `graphify-out/GRAPH_REPORT.md`, and `
 
 The gateway uses an explicit allowlist so arbitrary models returned by NVIDIA cannot be selected accidentally. The default route is Nemotron 3.5 Lightning, easy requests use Nemotron 3.5 Bolt, and difficult requests use DeepSeek V4.1 Flash. The allowlist can be narrowed with `NVIDIA_FREE_MODELS`; it cannot be expanded beyond the verified list in the source.
 
-## Full-access warning
+## Tool-access warning
 
-Full-access mode is intentional: the agent can read and write local files and run shell commands as the logged-in user. Run the gateway only on a machine and account where this behavior is acceptable. The gateway binds to loopback by default.
+The persistent launcher is readonly and security-enforced by default: chat has
+no file-write or shell capability. Temporary full-access mode is available only
+through explicit reviewed environment overrides; it can read and write local
+files and run bounded shell commands as the logged-in user. Run it only on a
+machine and account where that behavior is acceptable. The gateway binds to
+loopback by default.
 
 ## Development
 
