@@ -1,8 +1,7 @@
 # AI engineering controls
 
 This project applies production AI-engineering practices to the bundled local
-MLX, NVIDIA, and Apple providers. It does not require provider-neutral AI platform, the provider-neutral AI platform API,
-or provider-neutral AI platform-specific SDKs.
+MLX, NVIDIA, and Apple providers through provider-neutral interfaces.
 
 ## Architecture and workflow boundaries
 
