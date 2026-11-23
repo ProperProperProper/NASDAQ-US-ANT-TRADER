@@ -235,7 +235,7 @@ def promote_winner(winner: dict) -> dict:
 
 def run_main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--symbol", default="US.ANT")
+    ap.add_argument("--symbol", default="US.ANT", choices=["US.ANT"], help="active symbol (fixed to US.ANT)")
     ap.add_argument("--start", default="2026-01-01")
     ap.add_argument("--end", default=pd.Timestamp.now().strftime("%Y-%m-%d"))
     ap.add_argument("--refresh-1m", action="store_true")

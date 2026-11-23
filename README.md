@@ -74,7 +74,7 @@ Moomoo OpenD must be running on `127.0.0.1:11111` to fetch fresh candles. Do not
 ## Moomoo paper-competition bot
 
 `competition_bot.py` is the paper-execution boundary. The installed launchd job
-runs US.ANT against the standard Moomoo SIMULATE account `LOCAL_SIMULATE_ACCOUNT_ID`. It uses the
+runs US.ANT against the locally configured standard Moomoo SIMULATE account. It uses the
 interval and parameters published by the latest completed research sweep (10m
 is only the initial fallback). The bot does not place live orders.
 
@@ -87,7 +87,7 @@ python3 competition_bot.py --list-accounts
 Run a signal-only check:
 
 ```sh
-python3 competition_bot.py ANT --acc-id LOCAL_SIMULATE_ACCOUNT_ID --bar-interval 2 --live-paper
+US_ANT_PAPER_ACCOUNT_ID='<local SIMULATE account ID>' python3 competition_bot.py ANT --bar-interval 2 --live-paper
 ```
 
 Use the native app or launchd service for normal operation. See

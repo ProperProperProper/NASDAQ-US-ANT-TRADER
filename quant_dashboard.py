@@ -178,8 +178,8 @@ def stop_external_bot() -> None:
 
 def start_bot(symbols: list[str], acc_index: int, bar_interval: int = DEFAULT_BAR_INTERVAL) -> dict[str, Any]:
     global bot_instance, bot_thread
-    if not symbols:
-        raise ValueError("Select at least one symbol")
+    if [str(symbol).upper().removeprefix("US.") for symbol in symbols] != ["ANT"]:
+        raise ValueError("only US.ANT is permitted by the active paper bot")
     if bar_interval not in BAR_INTERVAL_TYPES:
         raise ValueError(f"unsupported bar interval: {bar_interval}")
     available = accounts()

@@ -4,7 +4,7 @@ set -u
 OPEN_D_HOST="127.0.0.1"
 OPEN_D_PORT="11111"
 BOT_LABEL="com.local.nasdaq-paper-bot"
-REQUIRED_ACCOUNT_ID="LOCAL_SIMULATE_ACCOUNT_ID"
+REQUIRED_ACCOUNT_ID="${US_ANT_PAPER_ACCOUNT_ID:-}"
 
 if ! /usr/bin/nc -z -G 2 "$OPEN_D_HOST" "$OPEN_D_PORT" >/dev/null 2>&1; then
   print -u2 "Moomoo OpenD is not reachable on ${OPEN_D_HOST}:${OPEN_D_PORT}"
@@ -27,9 +27,9 @@ if ! /bin/launchctl print "gui/$(/usr/bin/id -u)/${BOT_LABEL}" 2>/dev/null | /us
 fi
 
 PLIST="$HOME/Library/LaunchAgents/${BOT_LABEL}.plist"
-if ! /usr/bin/plutil -extract ProgramArguments xml1 -o - "$PLIST" 2>/dev/null \
-  | /usr/bin/grep -q "${REQUIRED_ACCOUNT_ID}"; then
-  print -u2 "paper bot is not pinned to SIMULATE account ${REQUIRED_ACCOUNT_ID}"
+if [[ -z "$REQUIRED_ACCOUNT_ID" ]] || ! /usr/bin/plutil -extract ProgramArguments xml1 -o - "$PLIST" 2>/dev/null \
+  | /usr/bin/grep -q -- "${REQUIRED_ACCOUNT_ID}"; then
+  print -u2 "paper bot is not pinned to the locally configured standard SIMULATE account"
   exit 78
 fi
 

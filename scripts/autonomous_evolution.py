@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MCP = ROOT / "ai_gateway" / "ai" / "mcp_server.py"
 RUNS = ROOT / "strategy_lab_runs"
 ALLOWED = re.compile(r"^(?:strategy_57pct\.py|scripts/[A-Za-z0-9_.-]+\.py)$")
-FORBIDDEN = ("LIVE", "REAL", "LOCAL_SIMULATE_ACCOUNT_ID", "COMPETITION_ACCOUNT_ID", "place_order", "submit_order", "trade_env")
+FORBIDDEN = ("LIVE", "REAL", "place_order", "submit_order", "trade_env")
 
 
 def git(*args: str, cwd: Path = ROOT, check: bool = True) -> str:

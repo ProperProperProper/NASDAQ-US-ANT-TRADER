@@ -8,7 +8,7 @@ macOS services used to run it.
 | Component | Current behavior |
 |---|---|
 | Moomoo OpenD | Required on `127.0.0.1:11111` |
-| Paper bot | `competition_bot.py`, US.ANT, standard SIMULATE account `LOCAL_SIMULATE_ACCOUNT_ID` |
+| Paper bot | `competition_bot.py`, US.ANT, locally configured standard SIMULATE account |
 | Initial live-paper bar | 10 minutes; replaced by the latest completed sweep |
 | Native app | `/Applications/US.ANT Paper Trader.app` |
 | Database | `quant_dashboard.sqlite3` (local research cache) |
@@ -36,7 +36,7 @@ OpenD is a separate local service.
    ```
 
 6. Use the SIMULATE account. The installed service is pinned to account
-   `LOCAL_SIMULATE_ACCOUNT_ID`; the bot refuses every other account and non-SIMULATE environments.
+   configured standard SIMULATE account; the bot refuses every other account and non-SIMULATE environments.
 7. Open the native app after OpenD is ready, then verify:
 
    ```sh
@@ -63,7 +63,7 @@ open -a "/Applications/US.ANT Paper Trader.app"
 ```
 
 While running, `/api/status` should report `active: true`,
-`mode: "SIMULATE"`, account `LOCAL_SIMULATE_ACCOUNT_ID`, and the selected `bar_interval`.
+`mode: "SIMULATE"`, the locally configured account, and the selected `bar_interval`.
 
 The watchdog checks OpenD on port `11111` and the bot launchd job. It exits
 non-zero if a dependency is down or
@@ -86,7 +86,7 @@ date window, costs, and strategy settings are the same.
 
 ## Safety boundaries
 
-- Account `LOCAL_SIMULATE_ACCOUNT_ID` is the only permitted SIMULATE account; never use competition account `COMPETITION_ACCOUNT_ID` or a live account ID.
+- The locally configured standard SIMULATE account is the only permitted account; never use a competition or live account.
 - `--live-paper` means paper execution, not live brokerage execution.
 - Keep credentials in macOS Keychain or the process environment; never commit
   them.

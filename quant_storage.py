@@ -14,6 +14,7 @@ import pandas as pd
 
 
 DB_PATH = Path(__file__).with_name("quant_dashboard.sqlite3")
+ACTIVE_SYMBOL = "US.ANT"
 
 
 def _json(value: Any) -> str:
@@ -80,6 +81,9 @@ def connect(path: Path = DB_PATH) -> sqlite3.Connection:
 
 
 def save_candles(frame: pd.DataFrame, symbol: str, interval_minutes: int, source: str = "moomoo_opend") -> int:
+    normalized_symbol = str(symbol).upper().strip()
+    if normalized_symbol != ACTIVE_SYMBOL:
+        raise ValueError(f"only {ACTIVE_SYMBOL} candle storage is permitted; got {symbol!r}")
     db = connect()
     count = 0
     try:
@@ -92,7 +96,7 @@ def save_candles(frame: pd.DataFrame, symbol: str, interval_minutes: int, source
             stamp = row.Index
             values = row._asdict()
             rows.append((
-                symbol, interval_minutes, pd.Timestamp(stamp).isoformat(),
+                normalized_symbol, interval_minutes, pd.Timestamp(stamp).isoformat(),
                 float(values["open"]), float(values["high"]), float(values["low"]), float(values["close"]),
                 float(values["volume"]) if "volume" in columns and pd.notna(values["volume"]) else None,
                 float(values["turnover"]) if "turnover" in columns and pd.notna(values["turnover"]) else None,
