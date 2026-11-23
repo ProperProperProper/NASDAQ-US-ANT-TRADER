@@ -4,7 +4,7 @@ set -u
 OPEN_D_HOST="127.0.0.1"
 OPEN_D_PORT="11111"
 BOT_LABEL="com.local.nasdaq-paper-bot"
-REQUIRED_ACCOUNT_ID="COMPETITION_ACCOUNT_ID"
+REQUIRED_ACCOUNT_ID="LOCAL_SIMULATE_ACCOUNT_ID"
 
 if ! /usr/bin/nc -z -G 2 "$OPEN_D_HOST" "$OPEN_D_PORT" >/dev/null 2>&1; then
   print -u2 "Moomoo OpenD is not reachable on ${OPEN_D_HOST}:${OPEN_D_PORT}"

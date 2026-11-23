@@ -51,6 +51,7 @@ POLL_SECONDS = 30
 MIN_BARS = 89 + 45 + 5
 OPEN_D_SOCKET_TIMEOUT_SECONDS = 20
 DEFAULT_BAR_INTERVAL = 10
+STANDARD_PAPER_ACCOUNT_ID = LOCAL_SIMULATE_ACCOUNT_ID
 BAR_INTERVAL_TYPES = {minutes: KLType.K_1M for minutes in MINUTE_INTERVALS}
 STATE_PATH = Path(__file__).with_name("competition_bot_state.json")
 LOG_PATH = Path(__file__).with_name("competition_bot.log")
@@ -89,6 +90,8 @@ class CompetitionBot:
     def __init__(self, symbols: list[str], acc_index: int, live_paper: bool, interval: int, acc_id: int | None = None, bar_interval: int = DEFAULT_BAR_INTERVAL) -> None:
         if bar_interval not in BAR_INTERVAL_TYPES:
             raise ValueError(f"unsupported bar interval: {bar_interval}")
+        if acc_id != STANDARD_PAPER_ACCOUNT_ID:
+            raise ValueError(f"only SIMULATE account {STANDARD_PAPER_ACCOUNT_ID} is permitted")
         self.symbols = [code(s) for s in symbols]
         self.acc_index = acc_index
         self.acc_id = acc_id
@@ -135,6 +138,8 @@ class CompetitionBot:
 
     def verify_sim_account(self) -> None:
         """Fail closed when the configured paper account is unavailable."""
+        if self.acc_id != STANDARD_PAPER_ACCOUNT_ID:
+            raise RuntimeError(f"only SIMULATE account {STANDARD_PAPER_ACCOUNT_ID} is permitted")
         ret, data = self.trade.get_acc_list()
         if ret != RET_OK:
             raise RuntimeError(f"SIMULATE account query failed: {data}")
@@ -357,7 +362,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("symbols", nargs="*", help="US symbols, e.g. AAPL NVDA; defaults to config only when supplied")
     parser.add_argument("--acc-index", type=int, default=0, help="SIMULATE US account index from --list-accounts")
-    parser.add_argument("--acc-id", type=int, default=None, help="Explicit SIMULATE account ID; preferred over account index")
+    parser.add_argument("--acc-id", type=int, default=STANDARD_PAPER_ACCOUNT_ID, help=f"SIMULATE account ID (fixed to {STANDARD_PAPER_ACCOUNT_ID})")
     parser.add_argument("--interval", type=int, default=POLL_SECONDS)
     parser.add_argument("--bar-interval", type=int, default=DEFAULT_BAR_INTERVAL, choices=sorted(BAR_INTERVAL_TYPES), help="Moomoo candle interval in minutes")
     parser.add_argument("--live-paper", action="store_true", help="Actually submit TrdEnv.SIMULATE orders")

@@ -30,7 +30,7 @@ from typing import Any
 import pandas as pd
 from urllib.parse import urlparse
 
-from competition_bot import BAR_INTERVAL_TYPES, DEFAULT_BAR_INTERVAL, CompetitionBot
+from competition_bot import BAR_INTERVAL_TYPES, DEFAULT_BAR_INTERVAL, STANDARD_PAPER_ACCOUNT_ID, CompetitionBot
 from BBI_5m_Backtest.local_quant_tester import charts
 from strategy_57pct import BASELINE, run as strategy_run, walk_forward_optimize, walk_forward_replay
 from strategy_57pct import stats as strategy_stats
@@ -45,7 +45,7 @@ MAX_BACKTEST_DAYS = 30
 PAPER_TRADING_ENABLED = True
 EXTERNAL_BOT_LABEL = "com.local.nasdaq-paper-bot"
 PAPER_BOT_PLIST = Path.home() / "Library/LaunchAgents/com.local.nasdaq-paper-bot.plist"
-PAPER_ACCOUNT_ID = COMPETITION_ACCOUNT_ID
+PAPER_ACCOUNT_ID = STANDARD_PAPER_ACCOUNT_ID
 INSTANCE_LOCK_PATH = Path(__file__).with_name("quant_dashboard.lock")
 SYMBOL = "US.ANT"
 INTERVAL_MINUTES = 1440
@@ -144,7 +144,7 @@ def execution_status() -> dict[str, Any]:
                 "active": True,
                 "symbols": ["US.ANT"],
                 "account_index": None,
-                "account_id": COMPETITION_ACCOUNT_ID,
+                "account_id": STANDARD_PAPER_ACCOUNT_ID,
                 "mode": "SIMULATE",
                 "source": "launchd",
                 "pid": int(pid) if pid and pid.isdigit() else None,
@@ -185,7 +185,7 @@ def start_bot(symbols: list[str], acc_index: int, bar_interval: int = DEFAULT_BA
     available = accounts()
     account = next((item for item in available if int(item.get("acc_id", 0)) == PAPER_ACCOUNT_ID), None)
     if not account or str(account.get("trd_env", "")).upper() != "SIMULATE":
-        raise ValueError("Required competition SIMULATE account is unavailable")
+        raise ValueError(f"Required standard SIMULATE account {STANDARD_PAPER_ACCOUNT_ID} is unavailable")
     if not PAPER_BOT_PLIST.exists():
         raise RuntimeError("paper bot LaunchAgent is missing")
     with PAPER_BOT_PLIST.open("rb") as handle:

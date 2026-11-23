@@ -1,13 +1,13 @@
 import Cocoa
 
-let accountID = "COMPETITION_ACCOUNT_ID"
+let accountID = "LOCAL_SIMULATE_ACCOUNT_ID"
 let botLabel = "com.local.nasdaq-paper-bot"
 let botPlist = "/Users/local.local/Library/LaunchAgents/com.local.nasdaq-paper-bot.plist"
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow!
     let status = NSTextField(labelWithString: "Checking…")
-    let account = NSTextField(labelWithString: "SIMULATE · COMPETITION_ACCOUNT_ID")
+    let account = NSTextField(labelWithString: "SIMULATE · LOCAL_SIMULATE_ACCOUNT_ID")
     let openD = NSTextField(labelWithString: "Checking…")
     let gateway = NSTextField(labelWithString: "Checking…")
     let strategy = NSTextField(labelWithString: "Checking…")
