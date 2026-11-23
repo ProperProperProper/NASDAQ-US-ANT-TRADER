@@ -2,7 +2,7 @@
 """Research US.ANT on synthetic 1m..21m candles built from a 1m Moomoo cache.
 
 The sweep tests the full 5-session window, publishes the highest-return tested
-interval and parameters, and restarts only the configured SIMULATE paper bot.
+interval and parameters without interrupting the configured SIMULATE paper bot.
 """
 from __future__ import annotations
 
@@ -10,8 +10,6 @@ import argparse
 import fcntl
 import json
 import multiprocessing
-import os
-import plistlib
 import random
 import sqlite3
 import subprocess
@@ -203,7 +201,7 @@ def ai_candidates(interval: int) -> list[dict]:
 
 
 def promote_winner(winner: dict) -> dict:
-    """Publish the tested winner and restart only the SIMULATE paper bot."""
+    """Publish a tested winner without interrupting the running paper bot."""
     interval = int(winner["interval"].removesuffix("m"))
     params = dict(winner["params"])
     strategy_path = ROOT / "paper_bot_live_strategy.json"
@@ -216,20 +214,9 @@ def promote_winner(winner: dict) -> dict:
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     temporary.replace(strategy_path)
 
-    plist_path = Path.home() / "Library/LaunchAgents/com.local.nasdaq-paper-bot.plist"
-    with plist_path.open("rb") as handle:
-        plist = plistlib.load(handle)
-    args = list(plist.get("ProgramArguments", []))
-    if "--bar-interval" in args:
-        args[args.index("--bar-interval") + 1] = str(interval)
-    else:
-        args.extend(["--bar-interval", str(interval)])
-    plist["ProgramArguments"] = args
-    with plist_path.open("wb") as handle:
-        plistlib.dump(plist, handle)
-    label = "com.local.nasdaq-paper-bot"
-    domain = f"gui/{os.getuid()}"
-    subprocess.run(["/bin/launchctl", "kickstart", "-k", f"{domain}/{label}"], check=False, capture_output=True, text=True)
+    # The live bot reloads compatible parameters at each new candle. Do not
+    # restart launchd here: an automatic research promotion must never
+    # interrupt an active paper order or reset in-memory execution state.
     return payload
 
 

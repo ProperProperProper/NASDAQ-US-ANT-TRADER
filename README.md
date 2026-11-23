@@ -132,7 +132,9 @@ sweep may publish a sufficiently supported interval and parameter set to the
 SIMULATE paper bot. Closing the GUI does not stop the paper bot.
 The evaluator uses four worker processes for the randomized tests.
 
-The installed launchd research job checks continuously, waiting seven minutes
-after each check/run completes. It runs only when a new cached US session is
-available, prevents overlapping sweeps, and records its state in the scheduler
-state file.
+The installed launchd research job checks continuously every minute. It runs
+for a new cached US session immediately, then reruns on the same cached data 15
+minutes after the previous successful sweep completes. Research runs
+at low CPU priority in its own process, and a promotion updates the strategy
+file without restarting or interrupting the paper bot. It prevents overlapping
+sweeps and records its state in the scheduler state file.

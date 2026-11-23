@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep research checks seven minutes apart after each run completes."""
+"""Check research eligibility every minute without blocking other services."""
 from __future__ import annotations
 
 import subprocess
@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-INTERVAL_SECONDS = 7 * 60
+CHECK_INTERVAL_SECONDS = 60
 
 
 def main() -> int:
@@ -18,7 +18,7 @@ def main() -> int:
             cwd=ROOT,
             check=False,
         )
-        time.sleep(INTERVAL_SECONDS)
+        time.sleep(CHECK_INTERVAL_SECONDS)
 
 
 if __name__ == "__main__":

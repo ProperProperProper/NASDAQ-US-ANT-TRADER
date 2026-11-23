@@ -13,10 +13,16 @@ macOS services used to run it.
 | Native app | `/Applications/US.ANT Paper Trader.app` |
 | Database | `quant_dashboard.sqlite3` (local research cache) |
 | Watchdog | `watch_moomoo_paper_stack.sh` |
-| Research scheduler | launchd continuous checker; polls every 7 minutes after a new cached session |
+| Research scheduler | launchd checker every minute; reruns the same cached session 15 minutes after a successful sweep, at low CPU priority |
 
 The native app controls the local paper bot directly through launchd. Moomoo
 OpenD is a separate local service.
+
+Research runs in a separate low-priority process. Completed promotions update
+the strategy file atomically; they do not restart the paper bot, interrupt
+orders, or reset its in-memory execution state. A changed candle interval is
+picked up on the next normal bot launch, while compatible parameter changes are
+reloaded on the next completed candle.
 
 ## OpenD setup
 
