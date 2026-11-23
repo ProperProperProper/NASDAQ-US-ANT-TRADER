@@ -112,7 +112,7 @@ To compare every locally aggregated interval, run:
 python3 scripts/app_minute_interval_sweep.py --start 2026-01-01 --end 2026-11-23
 ```
 
-The final `winner` record in `strategy_lab_runs/ANT-MINUTE-*/summary.json` identifies the highest-return tested interval and parameters over the 5-session window. A completed sweep publishes that configuration to the SIMULATE paper bot; no live trading is enabled.
+The final `winner` record in `strategy_lab_runs/ANT-MINUTE-*/summary.json` identifies the highest-return tested interval and parameters over the available session window. A completed sweep hot-swaps a configuration only after at least two completed US.ANT sessions and at least two trades support a normal-evidence result; otherwise the candidate is held for research and the existing SIMULATE configuration remains active. No live trading is enabled.
 
 ## Native macOS GUI
 
@@ -126,7 +126,7 @@ open -a "/Applications/US.ANT Paper Trader.app"
 
 The GUI shows bot health and account, provides refresh/start/stop controls, and runs the 100,000-
 candidate 1m-through-21m sweep over 5 sessions in the background. A completed
-sweep publishes its highest-return tested interval and parameters to the
+sweep may publish a sufficiently supported interval and parameter set to the
 SIMULATE paper bot. Closing the GUI does not stop the paper bot.
 The evaluator uses four worker processes for the randomized tests.
 

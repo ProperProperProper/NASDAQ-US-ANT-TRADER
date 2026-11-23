@@ -3,6 +3,7 @@ import unittest
 import pandas as pd
 
 from strategy_57pct import add_features, run
+from scripts.app_minute_interval_sweep import promotion_gate
 
 
 class GridStrategyTests(unittest.TestCase):
@@ -29,6 +30,13 @@ class GridStrategyTests(unittest.TestCase):
         _, trades, _ = run(self.candles(), {"grid_lookback": 3, "grid_intervals": 4}, slippage_bps=0)
         self.assertGreaterEqual(len(trades), 1)
         self.assertIn("OPEN_CROSSED_GRID_DOWN", {trade.reason for trade in trades})
+
+    def test_promotion_gate_is_two_sessions_and_two_trades(self):
+        winner = {"evidence": "NORMAL", "best": {"stats": {"trades": 2}}}
+        self.assertEqual(promotion_gate(winner, 2), (True, "minimum promotion gate passed"))
+        self.assertFalse(promotion_gate(winner, 1)[0])
+        self.assertFalse(promotion_gate({"evidence": "WEAK", "best": {"stats": {"trades": 2}}}, 2)[0])
+        self.assertFalse(promotion_gate({"evidence": "NORMAL", "best": {"stats": {"trades": 1}}}, 2)[0])
 
 
 if __name__ == "__main__":

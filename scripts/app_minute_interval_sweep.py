@@ -233,6 +233,20 @@ def promote_winner(winner: dict) -> dict:
     return payload
 
 
+def promotion_gate(winner: dict | None, completed_sessions: int) -> tuple[bool, str]:
+    """Allow hot-swapping only after a minimally credible validation window."""
+    if winner is None:
+        return False, "no eligible winner"
+    if completed_sessions < 2:
+        return False, f"only {completed_sessions} completed sessions; require at least 2"
+    stats = winner.get("best", {}).get("stats", {})
+    if winner.get("evidence") != "NORMAL":
+        return False, "winner has weak trade-count evidence"
+    if int(stats.get("trades", 0)) < 2:
+        return False, "winner has fewer than 2 trades"
+    return True, "minimum promotion gate passed"
+
+
 def run_main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--symbol", default="US.ANT", choices=["US.ANT"], help="active symbol (fixed to US.ANT)")
@@ -250,6 +264,7 @@ def run_main() -> int:
         print(json.dumps({"state": "ERROR", "stage": "cache", "error": str(exc)}), flush=True)
         return 1
     base = load_one_minute(args.symbol)
+    completed_sessions = int(base.index.normalize().nunique())
     run_dir = args.run_dir / ("ANT-MINUTE-" + time.strftime("%Y%m%d-%H%M%S"))
     run_dir.mkdir(parents=True, exist_ok=True)
     if args.total_candidates is not None and args.total_candidates < 21:
@@ -338,11 +353,15 @@ def run_main() -> int:
         "evidence": winner["evidence"],
     }
     promoted = None
+    promotion_allowed, promotion_reason = promotion_gate(winner, completed_sessions)
     if winner is not None:
         winner["best"]["run_id"] = run_dir.name
-        promoted = promote_winner(winner["best"])
+        if promotion_allowed:
+            promoted = promote_winner(winner["best"])
+        else:
+            promoted = {"state": "HELD", "reason": promotion_reason}
     randomized_actual = len(randomized_history) - randomized_before
-    summary = {"state": "COMPLETED", "symbol": args.symbol, "base_interval": "1m", "max_research_sessions": MAX_RESEARCH_SESSIONS, "randomized_candidates_requested": args.total_candidates or args.candidates * 21, "randomized_candidates": randomized_actual, "randomized_unique": True, "known_successful_tested_first": True, "ai_enabled": args.ai, "ai_proposals": ai_count, "profitable_params_file": str(profitable_path), "profitable_saved": profitable_count, "tested_intervals": [f"{n}m" for n in range(1, 22)], "winner": winner_record, "promoted": promoted, "results": results}
+    summary = {"state": "COMPLETED", "symbol": args.symbol, "base_interval": "1m", "completed_sessions": completed_sessions, "max_research_sessions": MAX_RESEARCH_SESSIONS, "randomized_candidates_requested": args.total_candidates or args.candidates * 21, "randomized_candidates": randomized_actual, "randomized_unique": True, "known_successful_tested_first": True, "ai_enabled": args.ai, "ai_proposals": ai_count, "profitable_params_file": str(profitable_path), "profitable_saved": profitable_count, "tested_intervals": [f"{n}m" for n in range(1, 22)], "winner": winner_record, "promotion_gate": {"allowed": promotion_allowed, "reason": promotion_reason}, "promoted": promoted, "results": results}
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=str) + "\n")
     (run_dir / "progress.json").write_text(json.dumps({"state": "COMPLETED", "randomized_candidates": summary["randomized_candidates"], "ai_proposals": ai_count, "profitable_saved": profitable_count, "results": results}, indent=2, default=str) + "\n")
     print(json.dumps({"winner": winner_record}, default=str), flush=True)

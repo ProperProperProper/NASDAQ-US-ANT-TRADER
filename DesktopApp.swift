@@ -6,7 +6,7 @@ let botPlist = "/Users/local.local/Library/LaunchAgents/com.local.nasdaq-paper-b
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow!
     let status = NSTextField(labelWithString: "Checking…")
-    let account = NSTextField(labelWithString: "SIMULATE · standard local account")
+    let account = NSTextField(labelWithString: "SIMULATE · checking local account")
     let openD = NSTextField(labelWithString: "Checking…")
     let gateway = NSTextField(labelWithString: "Checking…")
     let strategy = NSTextField(labelWithString: "Checking…")
@@ -22,12 +22,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var sweepBuffer = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        terminateStaleAppInstances()
         window = NSWindow(contentRect: NSMakeRect(0, 0, 720, 560), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "US.ANT Paper Trader"
         window.center()
         buildUI()
         window.makeKeyAndOrderFront(nil)
         refresh()
+    }
+
+    private func terminateStaleAppInstances() {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return }
+        let currentPID = ProcessInfo.processInfo.processIdentifier
+        let stale = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .filter { $0.processIdentifier != currentPID }
+        for application in stale {
+            application.terminate()
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
+                if !application.isTerminated { application.forceTerminate() }
+            }
+        }
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let children = [sweepProcess, gatewayProcess].compactMap { $0 }.filter { $0.isRunning }
+        guard !children.isEmpty else { return .terminateNow }
+        for child in children { child.terminate() }
+        DispatchQueue.global(qos: .utility).async {
+            let deadline = Date().addingTimeInterval(5)
+            while Date() < deadline && children.contains(where: { $0.isRunning }) {
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+            DispatchQueue.main.async {
+                for child in children where child.isRunning { child.interrupt() }
+                sender.reply(toApplicationShouldTerminate: true)
+            }
+        }
+        return .terminateLater
     }
 
     func label(_ text: String, size: CGFloat = 13) -> NSTextField {
@@ -159,6 +190,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         runCommand("/usr/bin/nc", ["-z", "127.0.0.1", "8788"]) { code, _ in
             DispatchQueue.main.async { self.gateway.stringValue = code == 0 ? "READY · bundled MCP" : "OFFLINE · AI unavailable" }
         }
+        runCommand("/usr/bin/python3", ["-c", "import json, urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8780/api/status', timeout=2)); print('SIMULATE · ' + str(d.get('account_id', 'not configured')))"]) { _, output in
+            DispatchQueue.main.async { self.account.stringValue = output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "SIMULATE · account unavailable" : output.trimmingCharacters(in: .whitespacesAndNewlines) }
+        }
         let root = "/Users/local.local/Projects/TradingSystem"
         runCommand("/usr/bin/python3", ["-c", "import json, os; p='\(root)/.research_scheduler_state.json'; d=json.load(open(p)) if os.path.exists(p) else {}; print('scheduled: ' + str(d.get('state','NOT RUN')) + (' · ' + str(d.get('session')) if d.get('session') else ''))"]) { _, output in
             DispatchQueue.main.async {
@@ -194,7 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let pid = output.split(separator: "\n").first(where: { $0.contains("pid =") })?.split(separator: "=").last?.trimmingCharacters(in: .whitespaces) ?? ""
             DispatchQueue.main.async {
                 self.status.stringValue = running ? "RUNNING · SIMULATE · PID \(pid)" : "STOPPED"
-                self.account.stringValue = "SIMULATE · standard local account"
+                if self.account.stringValue.isEmpty { self.account.stringValue = "SIMULATE · account unavailable" }
             }
         }
     }

@@ -92,6 +92,8 @@ date window, costs, and strategy settings are the same.
   them.
 - Keep the native app and bot local. Do not publish the bot through an
   unauthenticated reverse proxy.
+- HARD RULE: research promotion requires at least two completed US.ANT sessions
+  and at least two trades; weaker results remain held for research.
 
 ## Troubleshooting
 
