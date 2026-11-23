@@ -1,0 +1,8 @@
+; Local model runner: preserve normal MLX runtime compatibility while denying
+; all external network egress. It may only talk to the loopback gateway.
+(version 1)
+(allow default)
+(deny network-outbound)
+(allow network-inbound (local tcp "localhost:8081"))
+(allow network-outbound (remote tcp "localhost:8081"))
+(allow network-outbound (remote tcp "localhost:8788"))

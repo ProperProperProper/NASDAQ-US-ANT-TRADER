@@ -1,0 +1,12 @@
+; Gateway containment: deny access to credential/config stores and prevent
+; the agent process from changing its own launch or policy configuration.
+(version 1)
+(allow default)
+(deny file-read* (subpath "/Users/local.local/.ssh"))
+(deny file-read* (subpath "/Users/local.local/.aws"))
+(deny file-read* (subpath "/Users/local.local/.codex/auth.json"))
+(deny file-read* (subpath "/Users/local.local/.qwen"))
+(deny file-write* (subpath "/Users/local.local/Library/LaunchAgents"))
+(deny file-write* (subpath "/Users/local.local/Projects/TradingSystem/security"))
+(deny file-write* (subpath "/Users/local.local/.codex"))
+(deny file-write* (subpath "/Users/local.local/.qwen"))

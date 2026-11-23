@@ -1,0 +1,6 @@
+{
+  "prompt_injection": "block",
+  "destructive_tools": "block",
+  "suspicious_processes": "block",
+  "high_kv_anomaly": "block"
+}

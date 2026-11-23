@@ -1,0 +1,13 @@
+{
+  "interval": 1,
+  "mode": "SIMULATE",
+  "params": {
+    "entry_mode": "lower_half_cross",
+    "exit_mode": "any_grid_cross_down",
+    "grid_intervals": 5,
+    "grid_lookback": 25
+  },
+  "run_id": "ANT-MINUTE-20261123-201226",
+  "symbol": "US.ANT",
+  "updated_at": "2026-11-23T09:17:25.478936+00:00"
+}
