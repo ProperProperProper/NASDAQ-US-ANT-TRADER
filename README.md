@@ -1,12 +1,12 @@
 # Moomoo Paper Trading Bot & Walk-Forward Quant Dashboard
 
-Open-source Moomoo OpenD paper-trading system for US.APP with a local SQLite
+Open-source Moomoo OpenD paper-trading system for US.ANT with a local SQLite
 market-data cache, selectable candle intervals, and a causal daily candle-open grid-cross strategy,
 walk-forward-only parameter optimization, risk APIs, audit logs, and a browser
 dashboard. Designed for research and paper competitions on macOS Apple Silicon.
 
 **Keywords:** Moomoo paper trading bot, Moomoo OpenD API, quantitative trading,
-algorithmic trading, APP stock, price grid strategy, candle open crossing, walk-forward
+algorithmic trading, ANT stock, price grid strategy, candle open crossing, walk-forward
 optimization, SQLite market data, paper trading dashboard, Apple Silicon, Rust.
 
 > Research and paper trading only. This project does not provide financial
@@ -54,7 +54,7 @@ The 2 bps figure is an execution assumption, not a guarantee. Results depend on 
 
 ## Files
 
-- `competition_bot.py` — US.APP paper-trading process.
+- `competition_bot.py` — US.ANT paper-trading process.
 - `quant_dashboard.py` — local Moomoo-backed web console and tester.
 - `quant_storage.py` — SQLite candle, run, trade, and event storage.
 - `strategy_57pct.py` — strategy and walk-forward evaluation logic.
@@ -67,7 +67,7 @@ Moomoo OpenD must be running on `127.0.0.1:11111` to fetch fresh candles. Do not
 ## Moomoo paper-competition bot
 
 `competition_bot.py` is the paper-execution boundary. The installed launchd job
-runs US.APP against the explicit Moomoo SIMULATE account `COMPETITION_ACCOUNT_ID`, with a
+runs US.ANT against the explicit Moomoo SIMULATE account `COMPETITION_ACCOUNT_ID`, with a
 10-minute bar interval by default. The bot does not place live orders.
 
 Start Moomoo OpenD and log in, then identify the US paper account index:
@@ -79,7 +79,7 @@ python3 competition_bot.py --list-accounts
 Run a signal-only check:
 
 ```sh
-python3 competition_bot.py APP --acc-id COMPETITION_ACCOUNT_ID --bar-interval 10 --live-paper
+python3 competition_bot.py ANT --acc-id COMPETITION_ACCOUNT_ID --bar-interval 10 --live-paper
 ```
 
 Use the dashboard or launchd service for normal operation. See
@@ -96,7 +96,7 @@ python3 quant_dashboard.py
 open http://127.0.0.1:8780
 ```
 
-The dashboard fetches `US.APP` candles directly from Moomoo OpenD with
+The dashboard fetches `US.ANT` candles directly from Moomoo OpenD with
 `request_history_kline`, caches them in `quant_dashboard.sqlite3`, and uses
 those cached candles for the tester. A test is limited to 30 calendar days of
 scored data and adds a strategy warm-up period before that window. The Stop
