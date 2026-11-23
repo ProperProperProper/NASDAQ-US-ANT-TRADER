@@ -1,4 +1,4 @@
-"""Daily candle-open price-grid strategy used by the bot and native research app."""
+"""Intraday candle-open price-grid strategy used by the bot and native research app."""
 from __future__ import annotations
 
 import math
