@@ -1,9 +1,9 @@
 # Moomoo Paper Trading Bot & Native Research App
 
 Open-source Moomoo OpenD paper-trading system for US.ANT with a local SQLite
-market-data cache, selectable candle intervals, and a causal daily candle-open grid-cross strategy,
-walk-forward-only parameter optimization, risk APIs, audit logs, and a native
-macOS app. Designed for research and paper competitions on macOS Apple Silicon.
+market-data cache, selectable 1–21 minute candle intervals, a causal candle-open
+grid-cross strategy, bounded research, risk APIs, audit logs, and a native macOS
+app. Designed for research and SIMULATE paper trading on Apple Silicon.
 
 **Keywords:** Moomoo paper trading bot, Moomoo OpenD API, quantitative trading,
 algorithmic trading, ANT stock, price grid strategy, candle open crossing, walk-forward
@@ -13,33 +13,33 @@ optimization, SQLite market data, native paper trading app, Apple Silicon, Rust.
 > advice and does not guarantee performance. Live trading is intentionally not
 > supported by the native app.
 
-Research and backtesting code for a long-only daily price-grid strategy driven
-only by candle-open crossings.
+Research and backtesting code for a long-only intraday price-grid strategy driven
+only by completed-candle open crossings.
 
 ## Highlights
 
 - Moomoo OpenD candle ingestion with SQLite persistence.
-- Deterministic randomized research over a bounded five-session window.
+- Deterministic randomized research over up to the latest five completed sessions.
 - Shared strategy, data, risk, audit, and execution interfaces in
   `quant_api.py`.
 - Paper execution is restricted to the configured Moomoo SIMULATE account; live
   trading is not enabled.
 - Native macOS app for bot controls, status, and research progress.
-- Apple-Silicon-oriented Rust control-plane work in `thomas-ai/`.
+- Bundled Apple-Silicon-oriented Rust AI gateway in `ai_gateway/`.
 
 ## Candle-open grid baseline
 
-The active strategy uses the prior completed daily candles to calculate a rolling top
+The active strategy uses prior completed candles to calculate a rolling top
 and bottom. Two evenly spaced grid lines are inserted between them. It plots
 only candle open, candle close, and those four price-grid lines:
 
 | Setting | Value |
 |---|---:|
-| Grid lookback | 45 completed daily candles |
+| Grid lookback | 45 completed candles |
 | Grid levels | Top, 2/4 midpoint, 1/4 midpoint, bottom |
 | Entry | Candle open crosses upward through any grid level |
 | Exit | Candle open crosses downward through any grid level while long |
-| Other indicators | None; no EMA, ATR, take-profit, stop, or trailing exit |
+| Other signal indicators | None; execution risk exits are handled separately by the bot |
 | Slippage | 2 bps per side |
 | Position | Long only, one position |
 
@@ -71,7 +71,7 @@ owns all scoring and paper-bot configuration changes.
 
 Moomoo OpenD must be running on `127.0.0.1:11111` to fetch fresh candles. Do not commit API keys or credentials; use the macOS Keychain or environment variables locally.
 
-## Moomoo paper-competition bot
+## Moomoo SIMULATE paper bot
 
 `competition_bot.py` is the paper-execution boundary. The installed launchd job
 runs US.ANT against the locally configured standard Moomoo SIMULATE account. It uses the
@@ -84,10 +84,10 @@ Start Moomoo OpenD and log in, then identify the US paper account index:
 python3 competition_bot.py --list-accounts
 ```
 
-Run a signal-only check:
+Run a paper-only check (omit `--live-paper` for signal-only mode):
 
 ```sh
-US_ANT_PAPER_ACCOUNT_ID='<local SIMULATE account ID>' python3 competition_bot.py ANT --bar-interval 2 --live-paper
+US_ANT_PAPER_ACCOUNT_ID='<local SIMULATE account ID>' python3 competition_bot.py ANT --bar-interval 2
 ```
 
 Use the native app or launchd service for normal operation. See
@@ -99,7 +99,8 @@ troubleshooting.
 Research fetches only `US.ANT` 1-minute candles from Moomoo OpenD with
 `request_history_kline`, caches the source candles in `quant_dashboard.sqlite3`,
 and aggregates complete regular-session bars locally for each requested interval
-from 1m through 21m. The interval sweep uses the latest 5 completed US sessions.
+from 1m through 21m. The interval sweep uses up to the latest 5 completed US
+sessions; a newly listed symbol may have fewer sessions available.
 It stores each run, optimizer result, trade, and paper execution event in SQLite.
 The research output reports return,
 ending equity, maximum drawdown, trades, win rate, profit factor, average
@@ -125,7 +126,7 @@ open -a "/Applications/US.ANT Paper Trader.app"
 ```
 
 The GUI shows bot health and account, provides refresh/start/stop controls, and runs the 100,000-
-candidate 1m-through-21m sweep over 5 sessions in the background. A completed
+candidate 1m-through-21m sweep over the available session window in the background. A completed
 sweep may publish a sufficiently supported interval and parameter set to the
 SIMULATE paper bot. Closing the GUI does not stop the paper bot.
 The evaluator uses four worker processes for the randomized tests.

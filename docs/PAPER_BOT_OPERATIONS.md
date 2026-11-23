@@ -9,11 +9,11 @@ macOS services used to run it.
 |---|---|
 | Moomoo OpenD | Required on `127.0.0.1:11111` |
 | Paper bot | `competition_bot.py`, US.ANT, locally configured standard SIMULATE account |
-| Initial live-paper bar | 10 minutes; replaced by the latest completed sweep |
+| Initial paper bar | 10 minutes; replaced only by an eligible completed sweep |
 | Native app | `/Applications/US.ANT Paper Trader.app` |
 | Database | `quant_dashboard.sqlite3` (local research cache) |
 | Watchdog | `watch_moomoo_paper_stack.sh` |
-| Research scheduler | launchd at 10:00 local time after a new cached session |
+| Research scheduler | launchd continuous checker; polls every 7 minutes after a new cached session |
 
 The native app controls the local paper bot directly through launchd. Moomoo
 OpenD is a separate local service.
@@ -35,8 +35,8 @@ OpenD is a separate local service.
    python3 competition_bot.py --list-accounts
    ```
 
-6. Use the SIMULATE account. The installed service is pinned to account
-   configured standard SIMULATE account; the bot refuses every other account and non-SIMULATE environments.
+6. Use the standard locally configured SIMULATE account. The bot refuses every
+   other account and every non-SIMULATE environment.
 7. Open the native app after OpenD is ready, then verify:
 
    ```sh
@@ -63,7 +63,8 @@ open -a "/Applications/US.ANT Paper Trader.app"
 ```
 
 While running, `/api/status` should report `active: true`,
-`mode: "SIMULATE"`, the locally configured account, and the selected `bar_interval`.
+`mode: "SIMULATE"`, the locally configured account ID, and the selected
+`bar_interval`.
 
 The watchdog checks OpenD on port `11111` and the bot launchd job. It exits
 non-zero if a dependency is down or
