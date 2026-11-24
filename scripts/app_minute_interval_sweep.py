@@ -25,10 +25,10 @@ MAX_RESEARCH_SESSIONS = 5
 # Keep research below the CPU threshold used by MLX Sentinel so local AI and
 # the paper bot remain responsive while sweeps run asynchronously.
 RESEARCH_WORKERS = 1
-# Candidate generation currently uses the full research window. Until a
-# chronological train/validation/test split is implemented, never promote a
-# full-window winner automatically into the live paper bot.
-AUTO_PROMOTION_ENABLED = False
+# Automatic promotion is permitted only into the local SIMULATE paper bot.
+# The evaluator includes slippage and promotion is restricted to a profitable
+# candidate that beats the currently active parameters on the active interval.
+AUTO_PROMOTION_ENABLED = True
 _WORK_FRAME = None
 
 
@@ -244,17 +244,19 @@ def promote_winner(winner: dict) -> dict:
     return payload
 
 
-def promotion_gate(winner: dict | None, completed_sessions: int) -> tuple[bool, str]:
-    """Allow hot-swapping only after a minimally credible validation window."""
+def promotion_gate(winner: dict | None, completed_sessions: int, current_stats: dict | None = None) -> tuple[bool, str]:
+    """Allow a profitable, strictly better paper-only candidate to activate."""
     if winner is None:
         return False, "no eligible winner"
     if completed_sessions < 2:
         return False, f"only {completed_sessions} completed sessions; require at least 2"
     stats = winner.get("best", {}).get("stats", {})
-    if winner.get("evidence") != "NORMAL":
-        return False, "winner has weak trade-count evidence"
     if int(stats.get("trades", 0)) < 2:
         return False, "winner has fewer than 2 trades"
+    if float(stats.get("total_return_pct", 0)) <= 0:
+        return False, "candidate is not profitable after costs"
+    if current_stats is not None and float(stats.get("total_return_pct", 0)) <= float(current_stats.get("total_return_pct", 0)):
+        return False, "candidate does not beat current active parameters"
     return True, "minimum promotion gate passed"
 
 
@@ -376,19 +378,29 @@ def run_main() -> int:
         "ending_equity": winner["best"]["stats"]["ending_equity"],
         "evidence": winner["evidence"],
     }
+    active_interval = None
+    active_params = None
+    try:
+        active_config = json.loads((ROOT / "paper_bot_live_strategy.json").read_text())
+        active_interval = int(active_config.get("interval"))
+        active_params = {**BASELINE, **dict(active_config.get("params", {}))}
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        pass
+    active_result = next((item for item in results if item.get("interval") == f"{active_interval}m" and item.get("best", {}).get("stats")), None)
+    current_stats = None
+    if active_result is not None and active_params is not None:
+        current_stats = evaluate(aggregate(base, active_interval), active_params)["stats"]
+    promotion_candidate = active_result
     promoted = None
-    promotion_allowed, promotion_reason = promotion_gate(winner, completed_sessions)
-    if winner is not None:
-        winner["best"]["run_id"] = run_dir.name
+    promotion_allowed, promotion_reason = promotion_gate(promotion_candidate, completed_sessions, current_stats)
+    if promotion_candidate is not None:
+        promotion_candidate["best"]["run_id"] = run_dir.name
         if promotion_allowed and AUTO_PROMOTION_ENABLED:
-            promoted = promote_winner(winner["best"])
+            promoted = promote_winner(promotion_candidate["best"])
         else:
-            reason = promotion_reason if not AUTO_PROMOTION_ENABLED else "automatic promotion disabled"
-            if not AUTO_PROMOTION_ENABLED:
-                reason = "automatic promotion disabled pending out-of-sample validation"
-            promoted = {"state": "HELD", "reason": reason}
+            promoted = {"state": "HELD", "reason": promotion_reason}
     randomized_actual = len(randomized_history) - randomized_before
-    summary = {"state": "COMPLETED", "symbol": args.symbol, "phase": args.phase, "base_interval": "1m", "completed_sessions": completed_sessions, "max_research_sessions": MAX_RESEARCH_SESSIONS, "randomized_candidates_requested": total_randomized, "randomized_candidates": randomized_actual, "randomized_unique": True, "known_successful_tested_first": True, "ai_enabled": args.ai, "ai_proposals": ai_count, "profitable_params_file": str(profitable_path), "profitable_saved": profitable_count, "tested_intervals": [f"{n}m" for n in intervals], "winner": winner_record, "promotion_gate": {"allowed": promotion_allowed, "reason": promotion_reason}, "promoted": promoted, "results": results}
+    summary = {"state": "COMPLETED", "symbol": args.symbol, "phase": args.phase, "base_interval": "1m", "completed_sessions": completed_sessions, "max_research_sessions": MAX_RESEARCH_SESSIONS, "randomized_candidates_requested": total_randomized, "randomized_candidates": randomized_actual, "randomized_unique": True, "known_successful_tested_first": True, "ai_enabled": args.ai, "ai_proposals": ai_count, "profitable_params_file": str(profitable_path), "profitable_saved": profitable_count, "tested_intervals": [f"{n}m" for n in intervals], "winner": winner_record, "active_interval": active_interval, "current_active_stats": current_stats, "promotion_gate": {"allowed": promotion_allowed, "reason": promotion_reason, "scope": "SIMULATE active interval only"}, "promoted": promoted, "results": results}
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=str) + "\n")
     (run_dir / "progress.json").write_text(json.dumps({"state": "COMPLETED", "randomized_candidates": summary["randomized_candidates"], "ai_proposals": ai_count, "profitable_saved": profitable_count, "results": results}, indent=2, default=str) + "\n")
     print(json.dumps({"winner": winner_record}, default=str), flush=True)

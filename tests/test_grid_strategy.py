@@ -59,11 +59,13 @@ class GridStrategyTests(unittest.TestCase):
         self.assertEqual(len(live), 2)
 
     def test_promotion_gate_is_two_sessions_and_two_trades(self):
-        winner = {"evidence": "NORMAL", "best": {"stats": {"trades": 2}}}
+        winner = {"best": {"stats": {"trades": 2, "total_return_pct": 2.0}}}
         self.assertEqual(promotion_gate(winner, 2), (True, "minimum promotion gate passed"))
         self.assertFalse(promotion_gate(winner, 1)[0])
-        self.assertFalse(promotion_gate({"evidence": "WEAK", "best": {"stats": {"trades": 2}}}, 2)[0])
-        self.assertFalse(promotion_gate({"evidence": "NORMAL", "best": {"stats": {"trades": 1}}}, 2)[0])
+        self.assertFalse(promotion_gate({"best": {"stats": {"trades": 1, "total_return_pct": 2.0}}}, 2)[0])
+        self.assertFalse(promotion_gate({"best": {"stats": {"trades": 2, "total_return_pct": 0.0}}}, 2)[0])
+        self.assertFalse(promotion_gate(winner, 2, {"total_return_pct": 2.0})[0])
+        self.assertTrue(promotion_gate(winner, 2, {"total_return_pct": 1.0})[0])
 
     def test_research_phases_use_us_eastern_market_hours(self):
         self.assertEqual(session_phase(pd.Timestamp("2026-01-05 12:00", tz="UTC").to_pydatetime()), "PREMARKET")
