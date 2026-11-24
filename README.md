@@ -128,13 +128,15 @@ open -a "/Applications/US.ANT Paper Trader.app"
 
 The GUI shows bot health and account, provides refresh/start/stop controls, and runs the 100,000-
 candidate 1m-through-21m sweep over the available session window in the background. A completed
-sweep may publish a sufficiently supported interval and parameter set to the
-SIMULATE paper bot. Closing the GUI does not stop the paper bot.
+sweep records candidate interval and parameter sets for review; it does not
+automatically change the SIMULATE paper bot. Closing the GUI does not stop the
+paper bot.
 The evaluator uses four worker processes for the randomized tests.
 
 The installed launchd research job checks continuously every minute. It runs
 for a new cached US session immediately, then reruns on the same cached data 15
-minutes after the previous successful sweep completes. Research runs
-at low CPU priority in its own process, and a promotion updates the strategy
-file without restarting or interrupting the paper bot. It prevents overlapping
-sweeps and records its state in the scheduler state file.
+minutes after the previous successful sweep completes. Research runs at low
+CPU priority in its own process. Automatic promotion is held until the sweep
+has a chronological train/validation/test split with an untouched final set.
+It prevents overlapping sweeps and records its state in the scheduler state
+file.

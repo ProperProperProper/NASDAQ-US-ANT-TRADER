@@ -23,6 +23,10 @@ ROOT = Path(__file__).resolve().parents[1]
 RANDOM_HISTORY = ROOT / ".randomized_param_history.json"
 MAX_RESEARCH_SESSIONS = 5
 RESEARCH_WORKERS = 4
+# Candidate generation currently uses the full research window. Until a
+# chronological train/validation/test split is implemented, never promote a
+# full-window winner automatically into the live paper bot.
+AUTO_PROMOTION_ENABLED = False
 _WORK_FRAME = None
 
 
@@ -343,10 +347,13 @@ def run_main() -> int:
     promotion_allowed, promotion_reason = promotion_gate(winner, completed_sessions)
     if winner is not None:
         winner["best"]["run_id"] = run_dir.name
-        if promotion_allowed:
+        if promotion_allowed and AUTO_PROMOTION_ENABLED:
             promoted = promote_winner(winner["best"])
         else:
-            promoted = {"state": "HELD", "reason": promotion_reason}
+            reason = promotion_reason if not AUTO_PROMOTION_ENABLED else "automatic promotion disabled"
+            if not AUTO_PROMOTION_ENABLED:
+                reason = "automatic promotion disabled pending out-of-sample validation"
+            promoted = {"state": "HELD", "reason": reason}
     randomized_actual = len(randomized_history) - randomized_before
     summary = {"state": "COMPLETED", "symbol": args.symbol, "base_interval": "1m", "completed_sessions": completed_sessions, "max_research_sessions": MAX_RESEARCH_SESSIONS, "randomized_candidates_requested": args.total_candidates or args.candidates * 21, "randomized_candidates": randomized_actual, "randomized_unique": True, "known_successful_tested_first": True, "ai_enabled": args.ai, "ai_proposals": ai_count, "profitable_params_file": str(profitable_path), "profitable_saved": profitable_count, "tested_intervals": [f"{n}m" for n in range(1, 22)], "winner": winner_record, "promotion_gate": {"allowed": promotion_allowed, "reason": promotion_reason}, "promoted": promoted, "results": results}
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=str) + "\n")

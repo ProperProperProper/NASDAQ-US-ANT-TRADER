@@ -2,7 +2,7 @@ import unittest
 
 import pandas as pd
 
-from strategy_57pct import add_features, run
+from strategy_57pct import add_features, run, strategy_signal
 from scripts.app_minute_interval_sweep import promotion_gate
 
 
@@ -30,6 +30,11 @@ class GridStrategyTests(unittest.TestCase):
         _, trades, _ = run(self.candles(), {"grid_lookback": 3, "grid_intervals": 4}, slippage_bps=0)
         self.assertGreaterEqual(len(trades), 1)
         self.assertIn("OPEN_CROSSED_GRID_DOWN", {trade.reason for trade in trades})
+
+    def test_live_signal_uses_latest_completed_bar(self):
+        frame = self.candles()
+        signal = strategy_signal(frame, {"grid_lookback": 3, "grid_intervals": 4})
+        self.assertEqual(signal["bar"], str(frame.index[-1]))
 
     def test_promotion_gate_is_two_sessions_and_two_trades(self):
         winner = {"evidence": "NORMAL", "best": {"stats": {"trades": 2}}}

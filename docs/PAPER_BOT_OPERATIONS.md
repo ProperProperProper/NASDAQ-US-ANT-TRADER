@@ -22,7 +22,9 @@ Research runs in a separate low-priority process. Completed promotions update
 the strategy file atomically; they do not restart the paper bot, interrupt
 orders, or reset its in-memory execution state. A changed candle interval is
 picked up on the next normal bot launch, while compatible parameter changes are
-reloaded on the next completed candle.
+reloaded on the next completed candle. Automatic promotion is currently held
+until the research sweep adds a chronological train/validation/test split with
+an untouched final set; research results are still recorded for review.
 
 ## OpenD setup
 

@@ -76,13 +76,6 @@ def scalar(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def row_value(frame: pd.DataFrame, row: int, names: tuple[str, ...], default: float = 0.0) -> float:
-    for name in names:
-        if name in frame.columns:
-            return scalar(frame.iloc[row][name], default)
-    return default
-
-
 def code(symbol: str) -> str:
     symbol = symbol.upper().strip()
     return symbol if "." in symbol else f"US.{symbol}"
@@ -200,7 +193,12 @@ class CompetitionBot:
         ret, data = self.quote.get_market_snapshot([symbol])
         if ret != RET_OK or data.empty:
             raise RuntimeError(f"snapshot failed for {symbol}: {data}")
-        return row_value(data, 0, ("last_price", "cur_price"))
+        for field in ("last_price", "cur_price"):
+            if field in data.columns:
+                value = scalar(data.iloc[0][field])
+                if value > 0:
+                    return value
+        raise RuntimeError(f"snapshot returned no positive price for {symbol}: {list(data.columns)}")
 
     def candles(self, symbol: str) -> pd.DataFrame:
         now = datetime.now()

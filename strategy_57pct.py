@@ -111,6 +111,12 @@ def add_features(candles: pd.DataFrame, params: dict = BASELINE) -> pd.DataFrame
 
 
 def strategy_signal(frame: pd.DataFrame, params: dict = BASELINE) -> dict:
+    """Return the signal for the latest completed candle in ``frame``.
+
+    Callers must provide completed candles. The live bot already aggregates
+    only complete regular-session bars, so using the penultimate row here
+    would unnecessarily delay every live signal by one bar.
+    """
     data = frame.copy()
     if "time_key" in data.columns:
         data["time_key"] = pd.to_datetime(data["time_key"])
@@ -118,8 +124,8 @@ def strategy_signal(frame: pd.DataFrame, params: dict = BASELINE) -> dict:
     x = add_features(data, params)
     if len(x) < 2:
         raise ValueError("not enough candles for the grid")
-    bar = x.iloc[-2]
-    return {"bar": str(x.index[-2]), "open": float(bar.open), "close": float(bar.close),
+    bar = x.iloc[-1]
+    return {"bar": str(x.index[-1]), "open": float(bar.open), "close": float(bar.close),
             "grid_top": float(bar.grid_top), "grid_upper_mid": float(bar.grid_upper_mid),
             "grid_lower_mid": float(bar.grid_lower_mid), "grid_bottom": float(bar.grid_bottom),
             "buy_signal": bool(bar.buy_signal), "close_signal": bool(bar.close_signal),
