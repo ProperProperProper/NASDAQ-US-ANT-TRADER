@@ -58,11 +58,10 @@ class GridStrategyTests(unittest.TestCase):
         self.assertEqual(len(complete), 1)
         self.assertEqual(len(live), 2)
 
-    def test_promotion_gate_is_two_sessions_and_two_trades(self):
+    def test_promotion_gate_requires_profit_and_beats_current(self):
         winner = {"best": {"stats": {"trades": 2, "total_return_pct": 2.0}}}
-        self.assertEqual(promotion_gate(winner, 2), (True, "minimum promotion gate passed"))
-        self.assertFalse(promotion_gate(winner, 1)[0])
-        self.assertFalse(promotion_gate({"best": {"stats": {"trades": 1, "total_return_pct": 2.0}}}, 2)[0])
+        self.assertEqual(promotion_gate(winner, 2), (True, "profitable candidate beats current active parameters"))
+        self.assertTrue(promotion_gate({"best": {"stats": {"trades": 1, "total_return_pct": 2.0}}}, 1)[0])
         self.assertFalse(promotion_gate({"best": {"stats": {"trades": 2, "total_return_pct": 0.0}}}, 2)[0])
         self.assertFalse(promotion_gate(winner, 2, {"total_return_pct": 2.0})[0])
         self.assertTrue(promotion_gate(winner, 2, {"total_return_pct": 1.0})[0])

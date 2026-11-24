@@ -244,20 +244,16 @@ def promote_winner(winner: dict) -> dict:
     return payload
 
 
-def promotion_gate(winner: dict | None, completed_sessions: int, current_stats: dict | None = None) -> tuple[bool, str]:
+def promotion_gate(winner: dict | None, completed_sessions: int = 0, current_stats: dict | None = None) -> tuple[bool, str]:
     """Allow a profitable, strictly better paper-only candidate to activate."""
     if winner is None:
         return False, "no eligible winner"
-    if completed_sessions < 2:
-        return False, f"only {completed_sessions} completed sessions; require at least 2"
     stats = winner.get("best", {}).get("stats", {})
-    if int(stats.get("trades", 0)) < 2:
-        return False, "winner has fewer than 2 trades"
     if float(stats.get("total_return_pct", 0)) <= 0:
         return False, "candidate is not profitable after costs"
     if current_stats is not None and float(stats.get("total_return_pct", 0)) <= float(current_stats.get("total_return_pct", 0)):
         return False, "candidate does not beat current active parameters"
-    return True, "minimum promotion gate passed"
+    return True, "profitable candidate beats current active parameters"
 
 
 def parse_intervals(value: str | None) -> list[int]:
