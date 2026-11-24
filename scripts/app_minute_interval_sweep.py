@@ -386,7 +386,7 @@ def run_main() -> int:
     current_stats = None
     if active_result is not None and active_params is not None:
         current_stats = evaluate(aggregate(base, active_interval), active_params)["stats"]
-    promotion_candidate = active_result
+    promotion_candidate = winner
     promoted = None
     promotion_allowed, promotion_reason = promotion_gate(promotion_candidate, completed_sessions, current_stats)
     if promotion_candidate is not None:
@@ -396,7 +396,7 @@ def run_main() -> int:
         else:
             promoted = {"state": "HELD", "reason": promotion_reason}
     randomized_actual = len(randomized_history) - randomized_before
-    summary = {"state": "COMPLETED", "symbol": args.symbol, "phase": args.phase, "base_interval": "1m", "completed_sessions": completed_sessions, "max_research_sessions": MAX_RESEARCH_SESSIONS, "randomized_candidates_requested": total_randomized, "randomized_candidates": randomized_actual, "randomized_unique": True, "known_successful_tested_first": True, "ai_enabled": args.ai, "ai_proposals": ai_count, "profitable_params_file": str(profitable_path), "profitable_saved": profitable_count, "tested_intervals": [f"{n}m" for n in intervals], "winner": winner_record, "active_interval": active_interval, "current_active_stats": current_stats, "promotion_gate": {"allowed": promotion_allowed, "reason": promotion_reason, "scope": "SIMULATE active interval only"}, "promoted": promoted, "results": results}
+    summary = {"state": "COMPLETED", "symbol": args.symbol, "phase": args.phase, "base_interval": "1m", "completed_sessions": completed_sessions, "max_research_sessions": MAX_RESEARCH_SESSIONS, "randomized_candidates_requested": total_randomized, "randomized_candidates": randomized_actual, "randomized_unique": True, "known_successful_tested_first": True, "ai_enabled": args.ai, "ai_proposals": ai_count, "profitable_params_file": str(profitable_path), "profitable_saved": profitable_count, "tested_intervals": [f"{n}m" for n in intervals], "winner": winner_record, "active_interval": active_interval, "current_active_stats": current_stats, "promotion_gate": {"allowed": promotion_allowed, "reason": promotion_reason, "scope": "SIMULATE any tested interval", "policy_owner": "user_only"}, "promoted": promoted, "results": results}
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=str) + "\n")
     (run_dir / "progress.json").write_text(json.dumps({"state": "COMPLETED", "randomized_candidates": summary["randomized_candidates"], "ai_proposals": ai_count, "profitable_saved": profitable_count, "results": results}, indent=2, default=str) + "\n")
     print(json.dumps({"winner": winner_record}, default=str), flush=True)

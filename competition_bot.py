@@ -133,18 +133,19 @@ class CompetitionBot:
     def _save_state(self) -> None:
         STATE_PATH.write_text(json.dumps(self.state, indent=2) + "\n")
 
-    def _strategy_params(self, symbol: str) -> dict[str, Any]:
-        """Reload the most recently published compatible paper parameters."""
+    def _strategy_config(self, symbol: str) -> tuple[int, dict[str, Any]]:
+        """Reload the published paper interval and parameters on every cycle."""
         try:
             payload = json.loads(LIVE_STRATEGY_PATH.read_text())
+            interval = int(payload.get("interval"))
             if (str(payload.get("symbol", "")).upper() == symbol
-                    and int(payload.get("interval")) == self.bar_interval
+                    and interval in BAR_INTERVAL_TYPES
                     and payload.get("mode") == "SIMULATE"
                     and isinstance(payload.get("params"), dict)):
-                return {**BASELINE, **payload["params"]}
+                return interval, {**BASELINE, **payload["params"]}
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             pass
-        return dict(BASELINE)
+        return self.bar_interval, dict(BASELINE)
 
     def verify_sim_account(self) -> None:
         """Fail closed when the configured paper account is unavailable."""
@@ -278,6 +279,10 @@ class CompetitionBot:
             try:
                 logging.info("poll begin symbol=%s", symbol)
                 logging.info("requesting candles symbol=%s", symbol)
+                strategy_interval, params = self._strategy_config(symbol)
+                if strategy_interval != self.bar_interval:
+                    logging.info("adopting promoted paper interval symbol=%s old=%dm new=%dm", symbol, self.bar_interval, strategy_interval)
+                    self.bar_interval = strategy_interval
                 candles = self.candles(symbol)
                 if candles.empty or "time_key" not in candles.columns:
                     raise RuntimeError(f"no usable candles returned for {symbol}")
@@ -297,7 +302,6 @@ class CompetitionBot:
                             self._save_state()
                     logging.info("no new source candle symbol=%s bar=%s", symbol, source_bar)
                     continue
-                params = self._strategy_params(symbol)
                 signal_data = strategy_api.signal(candles, params)
                 if self.state["last_bar"].get(symbol) == signal_data["bar"]:
                     logging.info("no new completed bar symbol=%s bar=%s", symbol, signal_data["bar"])

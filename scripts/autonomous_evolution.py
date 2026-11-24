@@ -20,7 +20,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 MCP = ROOT / "ai_gateway" / "ai" / "mcp_server.py"
 RUNS = ROOT / "strategy_lab_runs"
-ALLOWED = re.compile(r"^(?:strategy_57pct\.py|scripts/[A-Za-z0-9_.-]+\.py)$")
+# The AI mutation worker may change strategy implementation only. Promotion
+# policy, execution, account, and scheduler files are user-owned controls.
+ALLOWED = re.compile(r"^strategy_57pct\.py$")
 FORBIDDEN = ("LIVE", "REAL", "place_order", "submit_order", "trade_env")
 
 
