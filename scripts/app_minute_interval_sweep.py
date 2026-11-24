@@ -258,6 +258,15 @@ def promotion_gate(winner: dict | None, completed_sessions: int) -> tuple[bool, 
     return True, "minimum promotion gate passed"
 
 
+def parse_intervals(value: str | None) -> list[int]:
+    if not value:
+        return list(range(1, 22))
+    values = sorted({int(item) for item in value.split(",") if item.strip()})
+    if not values or any(item < 1 or item > 21 for item in values):
+        raise ValueError("--intervals must contain comma-separated values from 1 to 21")
+    return values
+
+
 def run_main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--symbol", default="US.ANT", choices=["US.ANT"], help="active symbol (fixed to US.ANT)")
@@ -268,8 +277,10 @@ def run_main() -> int:
     ap.add_argument("--total-candidates", type=int, default=None, help="Total randomized candidates shared across the 21 intervals")
     ap.add_argument("--ai", action="store_true", help="Add bounded AI proposals from the local gateway")
     ap.add_argument("--phase", choices=["PREMARKET", "RTH", "MANUAL"], default="MANUAL", help="Research phase for scheduling and audit records")
+    ap.add_argument("--intervals", default=None, help="Comma-separated intervals to test; defaults to 1..21")
     ap.add_argument("--run-dir", type=Path, default=ROOT / "strategy_lab_runs")
     args = ap.parse_args()
+    intervals = parse_intervals(args.intervals)
     try:
         ensure_one_minute_cache(args.symbol, args.start, args.end, args.refresh_1m)
     except Exception as exc:
@@ -279,27 +290,27 @@ def run_main() -> int:
     completed_sessions = int(base.index.normalize().nunique())
     run_dir = args.run_dir / ("ANT-MINUTE-" + time.strftime("%Y%m%d-%H%M%S"))
     run_dir.mkdir(parents=True, exist_ok=True)
-    if args.total_candidates is not None and args.total_candidates < 21:
-        raise ValueError("--total-candidates must be at least 21")
+    if args.total_candidates is not None and args.total_candidates < len(intervals):
+        raise ValueError(f"--total-candidates must be at least {len(intervals)}")
     candidate_budget = args.candidates
     remainder = 0
     if args.total_candidates is not None:
-        candidate_budget, remainder = divmod(args.total_candidates, 21)
+        candidate_budget, remainder = divmod(args.total_candidates, len(intervals))
     profitable_path = run_dir / "profitable_params.jsonl"
     profitable_count = 0
     tested_randomized = 0
-    total_randomized = args.total_candidates or args.candidates * 21
+    total_randomized = args.total_candidates or args.candidates * len(intervals)
     ai_count = 0
     results = []
     randomized_history = load_random_history()
     randomized_before = len(randomized_history)
-    for interval in range(1, 22):
+    for interval_index, interval in enumerate(intervals):
         try:
             frame = aggregate(base, interval)
             if len(frame) < 80:
                 result = {"symbol": args.symbol, "interval": f"{interval}m", "rows": len(frame), "status": "INSUFFICIENT_COMPLETE_CANDLES"}
             else:
-                interval_budget = candidate_budget + (1 if interval <= remainder else 0)
+                interval_budget = candidate_budget + (1 if interval_index < remainder else 0)
                 full_population = []
                 known_params = known_successful(interval)
                 randomized_excluded = set(randomized_history)
@@ -352,7 +363,7 @@ def run_main() -> int:
         except Exception as exc:
             result = {"symbol": args.symbol, "interval": f"{interval}m", "rows": len(frame) if "frame" in locals() else 0, "status": "ERROR", "error": str(exc)}
         results.append(result)
-        (run_dir / "progress.json").write_text(json.dumps({"state": "RUNNING", "randomized_candidates": args.total_candidates or args.candidates * 21, "ai_proposals": ai_count, "profitable_saved": profitable_count, "results": results}, indent=2, default=str) + "\n")
+        (run_dir / "progress.json").write_text(json.dumps({"state": "RUNNING", "phase": args.phase, "intervals": intervals, "randomized_candidates": total_randomized, "ai_proposals": ai_count, "profitable_saved": profitable_count, "results": results}, indent=2, default=str) + "\n")
         print(json.dumps({"interval": result["interval"], "rows": result["rows"], "status": result.get("status", "COMPLETE"), "return_pct": result.get("best", {}).get("stats", {}).get("total_return_pct"), "ending_equity": result.get("best", {}).get("stats", {}).get("ending_equity"), "trades": result.get("best", {}).get("stats", {}).get("trades"), "profitable_saved": profitable_count, "progress": round(tested_randomized / total_randomized, 6), "tested": tested_randomized, "total": total_randomized}), flush=True)
     eligible = [item for item in results if item.get("best", {}).get("stats")]
     winner = max(eligible, key=lambda item: item["best"]["stats"]["total_return_pct"], default=None)
@@ -377,7 +388,7 @@ def run_main() -> int:
                 reason = "automatic promotion disabled pending out-of-sample validation"
             promoted = {"state": "HELD", "reason": reason}
     randomized_actual = len(randomized_history) - randomized_before
-    summary = {"state": "COMPLETED", "symbol": args.symbol, "phase": args.phase, "base_interval": "1m", "completed_sessions": completed_sessions, "max_research_sessions": MAX_RESEARCH_SESSIONS, "randomized_candidates_requested": args.total_candidates or args.candidates * 21, "randomized_candidates": randomized_actual, "randomized_unique": True, "known_successful_tested_first": True, "ai_enabled": args.ai, "ai_proposals": ai_count, "profitable_params_file": str(profitable_path), "profitable_saved": profitable_count, "tested_intervals": [f"{n}m" for n in range(1, 22)], "winner": winner_record, "promotion_gate": {"allowed": promotion_allowed, "reason": promotion_reason}, "promoted": promoted, "results": results}
+    summary = {"state": "COMPLETED", "symbol": args.symbol, "phase": args.phase, "base_interval": "1m", "completed_sessions": completed_sessions, "max_research_sessions": MAX_RESEARCH_SESSIONS, "randomized_candidates_requested": total_randomized, "randomized_candidates": randomized_actual, "randomized_unique": True, "known_successful_tested_first": True, "ai_enabled": args.ai, "ai_proposals": ai_count, "profitable_params_file": str(profitable_path), "profitable_saved": profitable_count, "tested_intervals": [f"{n}m" for n in intervals], "winner": winner_record, "promotion_gate": {"allowed": promotion_allowed, "reason": promotion_reason}, "promoted": promoted, "results": results}
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=str) + "\n")
     (run_dir / "progress.json").write_text(json.dumps({"state": "COMPLETED", "randomized_candidates": summary["randomized_candidates"], "ai_proposals": ai_count, "profitable_saved": profitable_count, "results": results}, indent=2, default=str) + "\n")
     print(json.dumps({"winner": winner_record}, default=str), flush=True)
