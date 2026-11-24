@@ -5,6 +5,11 @@ use std::sync::{
     Arc, Mutex,
 };
 
+// Qwen3 0.6B KV maxima can be several hundred on normal short responses.
+// Keep a hard ceiling for clearly invalid/extreme telemetry, while relying on
+// the adaptive baseline for model-specific anomaly detection below it.
+const MAX_KV_NORM_HARD_LIMIT: f64 = 1_000.0;
+
 #[derive(Default)]
 struct Baseline {
     count: u64,
@@ -346,7 +351,7 @@ impl SecurityGuard {
                 reasons.push("kv-mean-norm-anomaly".into());
             }
         }
-        if telemetry.max_norm > 100.0 {
+        if telemetry.max_norm > MAX_KV_NORM_HARD_LIMIT {
             score += 0.3;
             reasons.push("kv-max-norm-outlier".into());
         }

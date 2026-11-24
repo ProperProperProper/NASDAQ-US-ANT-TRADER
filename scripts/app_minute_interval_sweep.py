@@ -22,7 +22,9 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 RANDOM_HISTORY = ROOT / ".randomized_param_history.json"
 MAX_RESEARCH_SESSIONS = 5
-RESEARCH_WORKERS = 4
+# Keep research below the CPU threshold used by MLX Sentinel so local AI and
+# the paper bot remain responsive while sweeps run asynchronously.
+RESEARCH_WORKERS = 1
 # Candidate generation currently uses the full research window. Until a
 # chronological train/validation/test split is implemented, never promote a
 # full-window winner automatically into the live paper bot.
@@ -157,7 +159,10 @@ def ai_candidates(interval: int) -> list[dict]:
         "lower_half_cross, and exit_mode in any_grid_cross_down/top_breakdown/"
         "bottom_breakdown/lower_half_breakdown. No prose."
     )
-    mcp_request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "gateway_chat", "arguments": {"prompt": prompt, "provider": "auto", "max_tokens": 700}}}
+    # Structured candidate extraction needs a stronger instruction-following
+    # backend than the tiny local model; keep ordinary chat on auto routing,
+    # but use the verified NVIDIA free endpoint for this bounded JSON task.
+    mcp_request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "gateway_chat", "arguments": {"prompt": prompt, "provider": "nvidia", "max_tokens": 700}}}
     completed = subprocess.run(
         [sys.executable, str(ROOT / "ai_gateway/ai/mcp_server.py")],
         input=json.dumps(mcp_request) + "\n", capture_output=True, text=True, timeout=90, check=False,
