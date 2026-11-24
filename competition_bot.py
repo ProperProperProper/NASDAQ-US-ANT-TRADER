@@ -228,7 +228,7 @@ class CompetitionBot:
         minute_frame["time_key"] = pd.to_datetime(minute_frame["time_key"])
         minute_frame = minute_frame.sort_values("time_key").drop_duplicates("time_key").set_index("time_key")
         save_candles(minute_frame, symbol, 1)
-        bars = aggregate_us_session(minute_frame, self.bar_interval)
+        bars = aggregate_us_session(minute_frame, self.bar_interval, include_incomplete=True)
         if len(bars) > MIN_BARS + 20:
             bars = bars.tail(MIN_BARS + 20)
         save_candles(bars, symbol, self.bar_interval, source="local_1m_aggregation")

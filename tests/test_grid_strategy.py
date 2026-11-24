@@ -3,6 +3,7 @@ import unittest
 import pandas as pd
 
 from strategy_57pct import add_features, run, strategy_signal
+from minute_bars import aggregate_us_session
 from scripts.app_minute_interval_sweep import promotion_gate
 
 
@@ -35,6 +36,14 @@ class GridStrategyTests(unittest.TestCase):
         frame = self.candles()
         signal = strategy_signal(frame, {"grid_lookback": 3, "grid_intervals": 4})
         self.assertEqual(signal["bar"], str(frame.index[-1]))
+
+    def test_live_aggregation_can_retain_latest_partial_bucket(self):
+        index = pd.date_range("2026-01-05 09:30", periods=5, freq="1min")
+        frame = pd.DataFrame({"open": range(5), "high": range(5), "low": range(5), "close": range(5), "volume": 1.0}, index=index)
+        complete = aggregate_us_session(frame, 3)
+        live = aggregate_us_session(frame, 3, include_incomplete=True)
+        self.assertEqual(len(complete), 1)
+        self.assertEqual(len(live), 2)
 
     def test_promotion_gate_is_two_sessions_and_two_trades(self):
         winner = {"evidence": "NORMAL", "best": {"stats": {"trades": 2}}}

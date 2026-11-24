@@ -111,11 +111,10 @@ def add_features(candles: pd.DataFrame, params: dict = BASELINE) -> pd.DataFrame
 
 
 def strategy_signal(frame: pd.DataFrame, params: dict = BASELINE) -> dict:
-    """Return the signal for the latest completed candle in ``frame``.
+    """Return the signal for the latest supplied candle in ``frame``.
 
-    Callers must provide completed candles. The live bot already aggregates
-    only complete regular-session bars, so using the penultimate row here
-    would unnecessarily delay every live signal by one bar.
+    The live bot may supply the latest partial candle because its opening price
+    is already known. Research and backtests continue to supply complete bars.
     """
     data = frame.copy()
     if "time_key" in data.columns:

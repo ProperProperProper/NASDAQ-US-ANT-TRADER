@@ -7,8 +7,13 @@ import pandas as pd
 MINUTE_INTERVALS = tuple(range(1, 22))
 
 
-def aggregate_us_session(frame: pd.DataFrame, minutes: int) -> pd.DataFrame:
-    """Aggregate complete 09:30–16:00 US session buckets from 1m candles."""
+def aggregate_us_session(frame: pd.DataFrame, minutes: int, include_incomplete: bool = False) -> pd.DataFrame:
+    """Aggregate US-session buckets, optionally retaining the latest partial bucket.
+
+    Research and backtests use the default complete-only view. Live execution
+    may include the latest partial bucket because its opening price is already
+    known and is the value used by the causal grid signal.
+    """
     if minutes not in MINUTE_INTERVALS:
         raise ValueError("minutes must be between 1 and 21")
     if frame.empty:
@@ -19,8 +24,10 @@ def aggregate_us_session(frame: pd.DataFrame, minutes: int) -> pd.DataFrame:
     rows = []
     for _, group in x.groupby(x.index.date):
         grouped = group.groupby(pd.Grouper(freq=f"{minutes}min", origin="start_day", offset="9h30min"))
-        for stamp, part in grouped:
-            if len(part) != minutes:
+        groups = list(grouped)
+        for index, (stamp, part) in enumerate(groups):
+            is_latest_bucket = index == len(groups) - 1
+            if len(part) != minutes and not (include_incomplete and is_latest_bucket and len(part) > 0):
                 continue
             rows.append({
                 "time_key": stamp,
