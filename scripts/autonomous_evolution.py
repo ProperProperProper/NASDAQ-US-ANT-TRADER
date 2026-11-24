@@ -144,7 +144,8 @@ if new_best < old_best:
 
 
 def main() -> int:
-    if git("status", "--porcelain").strip():
+    dirty = [line for line in git("status", "--porcelain").splitlines() if not line.startswith("?? archive/")]
+    if dirty:
         print(json.dumps({"state": "SKIPPED", "reason": "main worktree is not clean"}))
         return 0
     run_id = "AUTO-EVOLVE-" + dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]

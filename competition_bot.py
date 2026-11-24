@@ -135,6 +135,7 @@ class CompetitionBot:
         self.state["peak_price"] = self.peak_price
         self.state["break_even_armed"] = self.break_even_armed
         self.state["profit_lock_armed"] = self.profit_lock_armed
+        self.state["bar_interval"] = self.bar_interval
         STATE_PATH.write_text(json.dumps(self.state, indent=2) + "\n")
 
     def _strategy_config(self, symbol: str) -> tuple[int, dict[str, Any]]:
@@ -287,6 +288,11 @@ class CompetitionBot:
                 if strategy_interval != self.bar_interval:
                     logging.info("adopting promoted paper interval symbol=%s old=%dm new=%dm", symbol, self.bar_interval, strategy_interval)
                     self.bar_interval = strategy_interval
+                    save_execution_event("STRATEGY_INTERVAL_ADOPTED", symbol, {"interval": strategy_interval, "params": params, "paper": True})
+                if self.state.get("strategy_interval") != strategy_interval or self.state.get("strategy_params") != params:
+                    self.state["strategy_interval"] = strategy_interval
+                    self.state["strategy_params"] = params
+                    self._save_state()
                 candles = self.candles(symbol)
                 if candles.empty or "time_key" not in candles.columns:
                     raise RuntimeError(f"no usable candles returned for {symbol}")
