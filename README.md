@@ -41,7 +41,7 @@ only candle open, candle close, and those four price-grid lines:
 | Exit | Candle open crosses downward through any grid level while long |
 | Other signal indicators | None; execution risk exits are handled separately by the bot |
 | Slippage | 2 bps per side |
-| Position | Long only, one position |
+| Position | Long only, one open position maximum across SIMULATE |
 
 This is the research baseline, not a claim about the currently selected paper-bot
 interval. The live paper bot defaults to 10-minute candles; the supported

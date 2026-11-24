@@ -48,6 +48,7 @@ from strategy_57pct import BASELINE
 
 
 POSITION_FRACTION = 0.95
+MAX_OPEN_POSITIONS = 1
 POLL_SECONDS = 30
 MIN_BARS = 89 + 45 + 5
 OPEN_D_SOCKET_TIMEOUT_SECONDS = 20
@@ -74,6 +75,17 @@ def scalar(value: Any, default: float = 0.0) -> float:
         return result if math.isfinite(result) else default
     except (TypeError, ValueError):
         return default
+
+
+def count_open_positions(data: pd.DataFrame) -> int:
+    """Count positive holdings returned by the SIMULATE position query."""
+    if data is None or data.empty:
+        return 0
+    count = 0
+    for _, row in data.iterrows():
+        if scalar(row.get("qty", row.get("position", 0))) > 0:
+            count += 1
+    return count
 
 
 def code(symbol: str) -> str:
@@ -188,6 +200,13 @@ class CompetitionBot:
         qty = scalar(row.get("qty", row.get("position", 0)))
         avg = scalar(row.get("cost_price", row.get("average_cost", 0)))
         return qty, avg
+
+    def open_position_count(self) -> int:
+        kwargs = {"trd_env": TrdEnv.SIMULATE, "acc_id": self.acc_id} if self.acc_id else {"trd_env": TrdEnv.SIMULATE, "acc_index": self.acc_index}
+        ret, data = self.trade.position_list_query(**kwargs)
+        if ret != RET_OK:
+            raise RuntimeError(f"position query failed: {data}")
+        return count_open_positions(data)
 
     def market_price(self, symbol: str) -> float:
         ret, data = self.quote.get_market_snapshot([symbol])
@@ -339,15 +358,20 @@ class CompetitionBot:
                     continue
 
                 if signal_data["long_signal"] and signal_data["entry_allowed"]:
-                    cash = self.account_funds()
-                    decision = risk_api.entry_decision(cash, price, POSITION_FRACTION)
-                    audit_api.event("RISK_DECISION", symbol, {**decision.__dict__, "cash": cash, "price": price, "signal": signal_data})
-                    if decision.allowed:
-                        self.submit(symbol, TrdSide.BUY, decision.quantity, "ENTRY")
-                        self.state["pending"][symbol] = "BUY"
-                        self.peak_price = price
-                        self.break_even_armed = False
-                        self.profit_lock_armed = False
+                    open_positions = self.open_position_count()
+                    if open_positions >= MAX_OPEN_POSITIONS:
+                        logging.info("entry blocked symbol=%s reason=MAX_OPEN_POSITIONS open_positions=%d limit=%d", symbol, open_positions, MAX_OPEN_POSITIONS)
+                        audit_api.event("ENTRY_BLOCKED", symbol, {"reason": "MAX_OPEN_POSITIONS", "open_positions": open_positions, "limit": MAX_OPEN_POSITIONS, "price": price, "signal": signal_data, "paper": True})
+                    else:
+                        cash = self.account_funds()
+                        decision = risk_api.entry_decision(cash, price, POSITION_FRACTION)
+                        audit_api.event("RISK_DECISION", symbol, {**decision.__dict__, "cash": cash, "price": price, "open_positions": open_positions, "max_open_positions": MAX_OPEN_POSITIONS, "signal": signal_data})
+                        if decision.allowed:
+                            self.submit(symbol, TrdSide.BUY, decision.quantity, "ENTRY")
+                            self.state["pending"][symbol] = "BUY"
+                            self.peak_price = price
+                            self.break_even_armed = False
+                            self.profit_lock_armed = False
                     self.state["last_bar"][symbol] = signal_data["bar"]
                     self.state["last_source_bar"][symbol] = source_bar
                     self._save_state()

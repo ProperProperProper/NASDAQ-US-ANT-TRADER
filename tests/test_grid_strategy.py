@@ -6,6 +6,7 @@ from strategy_57pct import add_features, run, strategy_signal
 from minute_bars import aggregate_us_session
 from scripts.app_minute_interval_sweep import promotion_gate
 from scripts.research_scheduler import session_phase
+from competition_bot import MAX_OPEN_POSITIONS, count_open_positions
 
 
 class GridStrategyTests(unittest.TestCase):
@@ -68,6 +69,11 @@ class GridStrategyTests(unittest.TestCase):
         self.assertEqual(session_phase(pd.Timestamp("2026-01-05 12:00", tz="UTC").to_pydatetime()), "PREMARKET")
         self.assertEqual(session_phase(pd.Timestamp("2026-01-05 15:00", tz="UTC").to_pydatetime()), "RTH")
         self.assertEqual(session_phase(pd.Timestamp("2026-01-05 22:00", tz="UTC").to_pydatetime()), "OFF_HOURS")
+
+    def test_open_position_limit_counts_positive_holdings(self):
+        positions = pd.DataFrame({"code": ["US.ANT", "US.X", "US.Y", "US.Z"], "qty": [10, 0, 3, 1]})
+        self.assertEqual(MAX_OPEN_POSITIONS, 1)
+        self.assertEqual(count_open_positions(positions), 3)
 
 
 if __name__ == "__main__":
