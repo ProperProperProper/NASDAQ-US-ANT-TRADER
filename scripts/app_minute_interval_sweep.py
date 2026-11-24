@@ -43,7 +43,7 @@ sys.path.insert(0, str(ROOT))
 from quant_storage import load_candles
 from minute_bars import aggregate_us_session
 from market_data import fetch_moomoo_candles
-from strategy_57pct import BASELINE, run, stats
+from strategy_57pct import ALLOCATION, BASELINE, run, stats
 
 
 def ensure_one_minute_cache(symbol: str, start: str, end: str, refresh: bool) -> None:
@@ -86,7 +86,7 @@ aggregate = aggregate_us_session
 
 
 def evaluate(frame: pd.DataFrame, params: dict) -> dict:
-    _, trades, data = run(frame, params, 100_000.0, 1.0, 2.0, 0.0)
+    _, trades, data = run(frame, params, 100_000.0, ALLOCATION, 2.0, 0.0)
     result = stats(trades, data, 100_000.0)
     result["selection_score"] = round(result["total_return_pct"] - .35 * abs(result["max_drawdown_pct"]), 4)
     return {"params": dict(params), "stats": result}
@@ -244,7 +244,7 @@ def promote_winner(winner: dict) -> dict:
     return payload
 
 
-def promotion_gate(winner: dict | None, completed_sessions: int = 0, current_stats: dict | None = None) -> tuple[bool, str]:
+def promotion_gate(winner: dict | None, current_stats: dict | None = None) -> tuple[bool, str]:
     """Allow a profitable, strictly better paper-only candidate to activate."""
     if winner is None:
         return False, "no eligible winner"
@@ -388,7 +388,7 @@ def run_main() -> int:
         current_stats = evaluate(aggregate(base, active_interval), active_params)["stats"]
     promotion_candidate = winner
     promoted = None
-    promotion_allowed, promotion_reason = promotion_gate(promotion_candidate, completed_sessions, current_stats)
+    promotion_allowed, promotion_reason = promotion_gate(promotion_candidate, current_stats)
     if promotion_candidate is not None:
         promotion_candidate["best"]["run_id"] = run_dir.name
         if promotion_allowed and AUTO_PROMOTION_ENABLED:

@@ -60,11 +60,11 @@ class GridStrategyTests(unittest.TestCase):
 
     def test_promotion_gate_requires_profit_and_beats_current(self):
         winner = {"best": {"stats": {"trades": 2, "total_return_pct": 2.0}}}
-        self.assertEqual(promotion_gate(winner, 2), (True, "profitable candidate beats current active parameters"))
-        self.assertTrue(promotion_gate({"best": {"stats": {"trades": 1, "total_return_pct": 2.0}}}, 1)[0])
-        self.assertFalse(promotion_gate({"best": {"stats": {"trades": 2, "total_return_pct": 0.0}}}, 2)[0])
-        self.assertFalse(promotion_gate(winner, 2, {"total_return_pct": 2.0})[0])
-        self.assertTrue(promotion_gate(winner, 2, {"total_return_pct": 1.0})[0])
+        self.assertEqual(promotion_gate(winner), (True, "profitable candidate beats current active parameters"))
+        self.assertTrue(promotion_gate({"best": {"stats": {"trades": 1, "total_return_pct": 2.0}}})[0])
+        self.assertFalse(promotion_gate({"best": {"stats": {"trades": 2, "total_return_pct": 0.0}}})[0])
+        self.assertFalse(promotion_gate(winner, {"total_return_pct": 2.0})[0])
+        self.assertTrue(promotion_gate(winner, {"total_return_pct": 1.0})[0])
 
     def test_research_phases_use_us_eastern_market_hours(self):
         self.assertEqual(session_phase(pd.Timestamp("2026-01-05 12:00", tz="UTC").to_pydatetime()), "PREMARKET")

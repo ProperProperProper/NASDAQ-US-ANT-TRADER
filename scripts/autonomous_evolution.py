@@ -111,11 +111,14 @@ frame = frame.set_index("time_key").sort_index()
 days = sorted(frame.index.normalize().unique())[-5:]
 frame = frame[frame.index.normalize().isin(days)]
 params = config["params"]
-def score(module):
+def score(module, bars, parameters):
+    _, trades, data = module.run(bars, parameters, 100_000.0, 0.95, 2.0, 0.0)
+    return module.stats(trades, data, 100_000.0)
 results = {}
 for interval in range(1, 22):
     bars = aggregate_us_session(frame, interval)
-    old, new = score(baseline), score(candidate)
+    old = score(baseline, bars, params)
+    new = score(candidate, bars, params)
     results[f"{interval}m"] = {"baseline": old, "candidate": new}
 old_best = max(item["baseline"]["total_return_pct"] for item in results.values())
 new_best = max(item["candidate"]["total_return_pct"] for item in results.values())

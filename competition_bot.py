@@ -50,7 +50,8 @@ from strategy_57pct import BASELINE
 POSITION_FRACTION = 0.95
 MAX_OPEN_POSITIONS = 1
 POLL_SECONDS = 30
-MIN_BARS = 89 + 45 + 5
+MAX_GRID_LOOKBACK = 240
+MIN_BARS = MAX_GRID_LOOKBACK + 5
 OPEN_D_SOCKET_TIMEOUT_SECONDS = 20
 DEFAULT_BAR_INTERVAL = 10
 STANDARD_PAPER_ACCOUNT_ID = int(os.environ.get("US_ANT_PAPER_ACCOUNT_ID", "0"))
@@ -110,10 +111,10 @@ class CompetitionBot:
         self.bar_interval = bar_interval
         self.running = True
         self.last_error: str | None = None
-        self.peak_price = 0.0
-        self.break_even_armed = False
-        self.profit_lock_armed = False
         self.state = self._load_state()
+        self.peak_price = scalar(self.state.get("peak_price"), 0.0)
+        self.break_even_armed = bool(self.state.get("break_even_armed", False))
+        self.profit_lock_armed = bool(self.state.get("profit_lock_armed", False))
         self.quote = OpenQuoteContext(host="127.0.0.1", port=11111)
         self.trade = OpenSecTradeContext(
             filter_trdmarket=TrdMarket.US,
@@ -131,6 +132,9 @@ class CompetitionBot:
         return state
 
     def _save_state(self) -> None:
+        self.state["peak_price"] = self.peak_price
+        self.state["break_even_armed"] = self.break_even_armed
+        self.state["profit_lock_armed"] = self.profit_lock_armed
         STATE_PATH.write_text(json.dumps(self.state, indent=2) + "\n")
 
     def _strategy_config(self, symbol: str) -> tuple[int, dict[str, Any]]:
