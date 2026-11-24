@@ -1157,7 +1157,21 @@ async fn call_upstream(
         }
         return Err(format!("{}: {}", status, text));
     }
-    serde_json::from_str(&text).map_err(|e| e.to_string())
+    let value: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    if provider == "local" {
+        let content = value
+            .get("choices")
+            .and_then(Value::as_array)
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice.get("message"))
+            .and_then(|message| message.get("content"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if content.trim().is_empty() {
+            return Err("local model returned an empty response".into());
+        }
+    }
+    Ok(value)
 }
 
 async fn call_apple(state: &AppState, req: Value) -> Result<Value, String> {

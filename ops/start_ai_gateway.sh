@@ -34,6 +34,15 @@ export MULTI_MODEL_GATEWAY_APPLE_AI_BIN="${MULTI_MODEL_GATEWAY_APPLE_AI_BIN:-$AP
 # Apple-managed entitlement that is not present on every developer account.
 export MULTI_MODEL_GATEWAY_APPLE_AI_MODE="${MULTI_MODEL_GATEWAY_APPLE_AI_MODE:-on_device}"
 
+# The Swift bridge is a local build artifact and is intentionally ignored by
+# Git. Build it on first launch (or after its sources change) so the gateway
+# does not silently report Apple AI as unavailable on a fresh checkout.
+APPLE_BRIDGE_ROOT="$APP_ROOT/apple-ai-bridge"
+APPLE_BRIDGE_BIN="$APPLE_BRIDGE_ROOT/.build/release/multi-model-apple-ai"
+if [[ ! -x "$APPLE_BRIDGE_BIN" || "$APPLE_BRIDGE_ROOT/Package.swift" -nt "$APPLE_BRIDGE_BIN" || "$APPLE_BRIDGE_ROOT/Sources/MultiModelAppleAI/main.swift" -nt "$APPLE_BRIDGE_BIN" ]]; then
+  /usr/bin/xcrun swift build --package-path "$APPLE_BRIDGE_ROOT" -c release
+fi
+
 cd "$APP_ROOT"
 if [[ "${MULTI_MODEL_GATEWAY_SANDBOX:-1}" == "1" ]] && command -v sandbox-exec >/dev/null 2>&1; then
   exec sandbox-exec -f "$ROOT/security/gateway-agent.sb" "$APP_ROOT/target/release/multi-model-ai-gateway" serve
