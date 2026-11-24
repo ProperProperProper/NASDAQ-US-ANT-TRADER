@@ -170,9 +170,15 @@ class CompetitionBot:
         ret, data = self.trade.accinfo_query(**kwargs)
         if ret != RET_OK:
             raise RuntimeError(f"account query failed: {data}")
-        for field in ("available_funds", "cash", "power", "total_assets"):
+        # SIMULATE margin accounts can report available_funds as the literal
+        # string N/A even when cash and buying power are valid. Prefer cash so
+        # sizing stays conservative, then fall back to the other numeric
+        # buying-power fields.
+        for field in ("cash", "available_funds", "us_cash", "power", "total_assets"):
             if field in data.columns:
-                return scalar(data.iloc[0][field])
+                value = scalar(data.iloc[0][field])
+                if value > 0:
+                    return value
         raise RuntimeError(f"no usable cash field in account response: {list(data.columns)}")
 
     def position(self, symbol: str) -> tuple[float, float]:
@@ -317,7 +323,7 @@ class CompetitionBot:
                 if signal_data["long_signal"] and signal_data["entry_allowed"]:
                     cash = self.account_funds()
                     decision = risk_api.entry_decision(cash, price, POSITION_FRACTION)
-                    audit_api.event("RISK_DECISION", symbol, {**decision.__dict__, "signal": signal_data})
+                    audit_api.event("RISK_DECISION", symbol, {**decision.__dict__, "cash": cash, "price": price, "signal": signal_data})
                     if decision.allowed:
                         self.submit(symbol, TrdSide.BUY, decision.quantity, "ENTRY")
                         self.state["pending"][symbol] = "BUY"
