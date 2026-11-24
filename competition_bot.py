@@ -304,11 +304,31 @@ class CompetitionBot:
                         continue
 
                 if qty > 0:
-                    take_profit = price >= avg * 1.0274
-                    stop_loss = price <= avg * (1 - 0.1324)
+                    if self.peak_price <= 0:
+                        self.peak_price = max(avg, price)
+                    self.peak_price = max(self.peak_price, price)
+                    take_profit_pct = max(0.0, scalar(params.get("take_profit_pct"), 0.0274))
+                    stop_loss_pct = max(0.0, scalar(params.get("stop_loss_pct"), 0.1324))
+                    trailing_activation_pct = max(0.0, scalar(params.get("trailing_activation_pct"), 0.0))
+                    trailing_stop_pct = max(0.0, scalar(params.get("trailing_stop_pct"), 0.0))
+                    take_profit = take_profit_pct > 0 and price >= avg * (1.0 + take_profit_pct)
+                    stop_loss = stop_loss_pct > 0 and price <= avg * (1.0 - stop_loss_pct)
+                    trailing_armed = (
+                        trailing_activation_pct > 0
+                        and trailing_stop_pct > 0
+                        and self.peak_price >= avg * (1.0 + trailing_activation_pct)
+                    )
+                    trailing_stop = trailing_armed and price <= self.peak_price * (1.0 - trailing_stop_pct)
                     session_exit = bool(signal_data.get("session_exit", False))
-                    if take_profit or stop_loss or session_exit or exit_signal:
-                        self.submit(symbol, TrdSide.SELL, int(qty), "EXIT")
+                    if take_profit or stop_loss or trailing_stop or session_exit or exit_signal:
+                        reason = (
+                            "TAKE_PROFIT" if take_profit else
+                            "STOP_LOSS" if stop_loss else
+                            "TRAILING_STOP" if trailing_stop else
+                            "SESSION_EXIT" if session_exit else
+                            "GRID_EXIT"
+                        )
+                        self.submit(symbol, TrdSide.SELL, int(qty), reason)
                         self.state["pending"][symbol] = "SELL"
                         self.peak_price = 0.0
                         self.break_even_armed = False

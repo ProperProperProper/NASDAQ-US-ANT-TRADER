@@ -14,6 +14,10 @@ BASELINE = {
     "grid_intervals": 4,
     "entry_mode": "any_grid_cross",
     "exit_mode": "any_grid_cross_down",
+    "take_profit_pct": 0.0274,
+    "stop_loss_pct": 0.1324,
+    "trailing_activation_pct": 0.0,
+    "trailing_stop_pct": 0.0,
 }
 GRID_BASELINE = BASELINE
 ALLOCATION = 0.95
@@ -137,28 +141,54 @@ def strategy_signal(frame: pd.DataFrame, params: dict = BASELINE) -> dict:
 def run(candles: pd.DataFrame, params: dict = BASELINE, capital: float = 100000.0,
         allocation: float = ALLOCATION, slippage_bps: float = 2.0,
         commission: float = 0.0, evaluation_start=None):
-    """Run long-only grid crossings with same-candle open fills."""
+    """Run long-only grid crossings with causal open-based risk exits."""
     x = add_features(candles, params)
     rows = list(x.iterrows())
     cash = float(capital); position = None; trades = []; equity_rows = []
     slip = slippage_bps / 10000.0
+    take_profit_pct = max(0.0, float(params.get("take_profit_pct", 0.0274)))
+    stop_loss_pct = max(0.0, float(params.get("stop_loss_pct", 0.1324)))
+    trailing_activation_pct = max(0.0, float(params.get("trailing_activation_pct", 0.0)))
+    trailing_stop_pct = max(0.0, float(params.get("trailing_stop_pct", 0.0)))
+    peak_price = 0.0
     for stamp, bar in rows:
         if evaluation_start is not None and stamp < pd.Timestamp(evaluation_start):
             continue
         price = float(bar.open)
-        if position and bool(bar.close_signal):
-            exit_price = price * (1.0 - slip)
-            gross = (exit_price - position["entry"]) * position["qty"]
-            costs = commission * 2.0; net = gross - costs
-            cash += position["qty"] * exit_price - costs
-            trades.append(Trade(position["signal_time"].isoformat(), position["entry_time"].isoformat(), position["entry"], position["qty"], stamp.isoformat(), exit_price, gross, costs, net, net / (position["entry"] * position["qty"]) * 100.0, "OPEN_CROSSED_GRID_DOWN"))
-            position = None
+        if position:
+            take_profit = take_profit_pct > 0 and price >= position["entry"] * (1.0 + take_profit_pct)
+            stop_loss = stop_loss_pct > 0 and price <= position["entry"] * (1.0 - stop_loss_pct)
+            trailing_armed = (
+                trailing_activation_pct > 0
+                and trailing_stop_pct > 0
+                and peak_price >= position["entry"] * (1.0 + trailing_activation_pct)
+            )
+            trailing_stop = trailing_armed and price <= peak_price * (1.0 - trailing_stop_pct)
+            if take_profit or stop_loss or trailing_stop or bool(bar.close_signal):
+                reason = (
+                    "TAKE_PROFIT" if take_profit else
+                    "STOP_LOSS" if stop_loss else
+                    "TRAILING_STOP" if trailing_stop else
+                    "OPEN_CROSSED_GRID_DOWN"
+                )
+                exit_price = price * (1.0 - slip)
+                gross = (exit_price - position["entry"]) * position["qty"]
+                costs = commission * 2.0; net = gross - costs
+                cash += position["qty"] * exit_price - costs
+                trades.append(Trade(position["signal_time"].isoformat(), position["entry_time"].isoformat(), position["entry"], position["qty"], stamp.isoformat(), exit_price, gross, costs, net, net / (position["entry"] * position["qty"]) * 100.0, reason))
+                position = None
+                peak_price = 0.0
+            else:
+                # The current bar's high is only known after its open. Carry
+                # it forward for a trailing decision on the next bar.
+                peak_price = max(peak_price, float(bar.high))
         if position is None and bool(bar.buy_signal):
             entry = price * (1.0 + slip)
             qty = math.floor(cash * allocation / entry)
             if qty > 0:
                 cash -= qty * entry + commission
                 position = {"signal_time": stamp, "entry_time": stamp, "entry": entry, "qty": qty}
+                peak_price = entry
         mark = cash + (position["qty"] * float(bar.close) if position else 0.0)
         equity_rows.append({"date": stamp, "equity": mark, "cash": cash, "position": position["qty"] if position else 0})
     if position and rows:

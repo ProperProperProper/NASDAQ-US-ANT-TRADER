@@ -126,12 +126,14 @@ execution boundary shared by the bot:
 open -a "/Applications/US.ANT Paper Trader.app"
 ```
 
-The GUI shows bot health and account, provides refresh/start/stop controls, and runs the 100,000-
-candidate 1m-through-21m sweep over the available session window in the background. A completed
-sweep records candidate interval and parameter sets for review; it does not
-automatically change the SIMULATE paper bot. Closing the GUI does not stop the
-paper bot.
-The evaluator uses four worker processes for the randomized tests.
+The GUI shows bot health and account, provides refresh/start/stop controls, maps each tested
+interval to return, ending equity, and trade count, and runs the 1m-through-21m sweep in the
+background. The scheduler runs a larger AI-assisted parameter sweep during US pre-market and
+smaller fine-tuning sweeps every 15 minutes during regular trading hours. Grid interval count,
+lookback, entry/exit mode, and bounded trailing parameters are tested. A completed sweep records
+candidate interval and parameter sets for review; it does not automatically change the SIMULATE
+paper bot. Closing the GUI does not stop the paper bot. Research is serialized to one worker so
+it remains asynchronous and does not disrupt live paper execution.
 
 The installed launchd research job checks continuously every minute. It runs
 for a new cached US session immediately, then reruns on the same cached data 15

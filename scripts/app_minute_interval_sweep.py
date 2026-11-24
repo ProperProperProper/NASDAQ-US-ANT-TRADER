@@ -130,6 +130,10 @@ def candidates(interval: int, count: int, excluded: set[str]) -> list[dict]:
         params["grid_intervals"] = rng.randint(2, 20)
         params["entry_mode"] = rng.choice(("any_grid_cross", "top_breakout", "upper_half_cross", "lower_half_cross"))
         params["exit_mode"] = rng.choice(("any_grid_cross_down", "top_breakdown", "bottom_breakdown", "lower_half_breakdown"))
+        params["trailing_activation_pct"] = rng.choice((0.0, 0.005, 0.01, 0.015, 0.02, 0.03, 0.04))
+        params["trailing_stop_pct"] = rng.choice((0.0, 0.005, 0.01, 0.015, 0.02, 0.03, 0.04))
+        if params["trailing_activation_pct"] == 0.0:
+            params["trailing_stop_pct"] = 0.0
         key = f"{interval}m:{param_key(params)}"
         if key not in excluded:
             excluded.add(key)
@@ -155,9 +159,10 @@ def ai_candidates(interval: int) -> list[dict]:
     prompt = (
         "Return a JSON array of up to 3 bounded parameter objects for a US.ANT "
         f"{interval}-minute candle-open grid strategy. Use only grid_lookback "
-        "integer 5..120, entry_mode in any_grid_cross/top_breakout/upper_half_cross/"
+        "integer 5..120, grid_intervals integer 2..20, entry_mode in any_grid_cross/top_breakout/upper_half_cross/"
         "lower_half_cross, and exit_mode in any_grid_cross_down/top_breakdown/"
-        "bottom_breakdown/lower_half_breakdown. No prose."
+        "bottom_breakdown/lower_half_breakdown. Also propose trailing_activation_pct "
+        "and trailing_stop_pct as decimals in 0.0..0.04; use both zero to disable. No prose."
     )
     # Structured candidate extraction needs a stronger instruction-following
     # backend than the tiny local model; keep ordinary chat on auto routing,
@@ -198,8 +203,18 @@ def ai_candidates(interval: int) -> list[dict]:
         try:
             if "grid_lookback" in item:
                 params["grid_lookback"] = max(5, min(120, int(item["grid_lookback"])))
+            if "grid_intervals" in item:
+                params["grid_intervals"] = max(2, min(20, int(item["grid_intervals"])))
         except (TypeError, ValueError):
             continue
+        for name in ("trailing_activation_pct", "trailing_stop_pct"):
+            try:
+                if name in item:
+                    params[name] = max(0.0, min(0.04, float(item[name])))
+            except (TypeError, ValueError):
+                continue
+        if params["trailing_activation_pct"] == 0.0:
+            params["trailing_stop_pct"] = 0.0
         if item.get("entry_mode") in entry_modes:
             params["entry_mode"] = item["entry_mode"]
         if item.get("exit_mode") in exit_modes:
@@ -252,6 +267,7 @@ def run_main() -> int:
     ap.add_argument("--candidates", type=int, default=250)
     ap.add_argument("--total-candidates", type=int, default=None, help="Total randomized candidates shared across the 21 intervals")
     ap.add_argument("--ai", action="store_true", help="Add bounded AI proposals from the local gateway")
+    ap.add_argument("--phase", choices=["PREMARKET", "RTH", "MANUAL"], default="MANUAL", help="Research phase for scheduling and audit records")
     ap.add_argument("--run-dir", type=Path, default=ROOT / "strategy_lab_runs")
     args = ap.parse_args()
     try:
@@ -337,7 +353,7 @@ def run_main() -> int:
             result = {"symbol": args.symbol, "interval": f"{interval}m", "rows": len(frame) if "frame" in locals() else 0, "status": "ERROR", "error": str(exc)}
         results.append(result)
         (run_dir / "progress.json").write_text(json.dumps({"state": "RUNNING", "randomized_candidates": args.total_candidates or args.candidates * 21, "ai_proposals": ai_count, "profitable_saved": profitable_count, "results": results}, indent=2, default=str) + "\n")
-        print(json.dumps({"interval": result["interval"], "rows": result["rows"], "status": result.get("status", "COMPLETE"), "return_pct": result.get("best", {}).get("stats", {}).get("total_return_pct"), "trades": result.get("best", {}).get("stats", {}).get("trades"), "profitable_saved": profitable_count, "progress": round(tested_randomized / total_randomized, 6), "tested": tested_randomized, "total": total_randomized}), flush=True)
+        print(json.dumps({"interval": result["interval"], "rows": result["rows"], "status": result.get("status", "COMPLETE"), "return_pct": result.get("best", {}).get("stats", {}).get("total_return_pct"), "ending_equity": result.get("best", {}).get("stats", {}).get("ending_equity"), "trades": result.get("best", {}).get("stats", {}).get("trades"), "profitable_saved": profitable_count, "progress": round(tested_randomized / total_randomized, 6), "tested": tested_randomized, "total": total_randomized}), flush=True)
     eligible = [item for item in results if item.get("best", {}).get("stats")]
     winner = max(eligible, key=lambda item: item["best"]["stats"]["total_return_pct"], default=None)
     winner_record = None if winner is None else {
@@ -346,6 +362,7 @@ def run_main() -> int:
         "total_return_pct": winner["best"]["stats"]["total_return_pct"],
         "max_drawdown_pct": winner["best"]["stats"]["max_drawdown_pct"],
         "trades": winner["best"]["stats"]["trades"],
+        "ending_equity": winner["best"]["stats"]["ending_equity"],
         "evidence": winner["evidence"],
     }
     promoted = None
@@ -360,7 +377,7 @@ def run_main() -> int:
                 reason = "automatic promotion disabled pending out-of-sample validation"
             promoted = {"state": "HELD", "reason": reason}
     randomized_actual = len(randomized_history) - randomized_before
-    summary = {"state": "COMPLETED", "symbol": args.symbol, "base_interval": "1m", "completed_sessions": completed_sessions, "max_research_sessions": MAX_RESEARCH_SESSIONS, "randomized_candidates_requested": args.total_candidates or args.candidates * 21, "randomized_candidates": randomized_actual, "randomized_unique": True, "known_successful_tested_first": True, "ai_enabled": args.ai, "ai_proposals": ai_count, "profitable_params_file": str(profitable_path), "profitable_saved": profitable_count, "tested_intervals": [f"{n}m" for n in range(1, 22)], "winner": winner_record, "promotion_gate": {"allowed": promotion_allowed, "reason": promotion_reason}, "promoted": promoted, "results": results}
+    summary = {"state": "COMPLETED", "symbol": args.symbol, "phase": args.phase, "base_interval": "1m", "completed_sessions": completed_sessions, "max_research_sessions": MAX_RESEARCH_SESSIONS, "randomized_candidates_requested": args.total_candidates or args.candidates * 21, "randomized_candidates": randomized_actual, "randomized_unique": True, "known_successful_tested_first": True, "ai_enabled": args.ai, "ai_proposals": ai_count, "profitable_params_file": str(profitable_path), "profitable_saved": profitable_count, "tested_intervals": [f"{n}m" for n in range(1, 22)], "winner": winner_record, "promotion_gate": {"allowed": promotion_allowed, "reason": promotion_reason}, "promoted": promoted, "results": results}
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2, default=str) + "\n")
     (run_dir / "progress.json").write_text(json.dumps({"state": "COMPLETED", "randomized_candidates": summary["randomized_candidates"], "ai_proposals": ai_count, "profitable_saved": profitable_count, "results": results}, indent=2, default=str) + "\n")
     print(json.dumps({"winner": winner_record}, default=str), flush=True)

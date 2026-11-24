@@ -219,7 +219,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let saved = value["saved"] as? Int ?? 0
                 self.sweepMetrics.stringValue = "Candidates: \(String(format: "%,d", candidates)) · AI proposals: \(ai) · Profitable saved: \(saved) · Run \(value["run"] as? String ?? "none")"
                 if let rows = value["rows"] as? [String] {
-                    self.output.string = "INTERVAL   RETURN       TRADES\n" + rows.joined(separator: "\n")
+                    self.output.string = "INTERVAL   RETURN       EQUITY       TRADES\n" + rows.joined(separator: "\n")
                 }
             }
         }
@@ -249,7 +249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sweepMetrics.stringValue = "Candidates: 0 / 100,000 · AI proposals: shown on completion · Profitable saved: 0"
         progress.doubleValue = 0
         progressLabel.stringValue = "0%"
-        output.string = "INTERVAL   RETURN       TRADES\nWaiting for interval results…"
+        output.string = "INTERVAL   RETURN       EQUITY       TRADES\nWaiting for interval results…"
         sweepBuffer = ""
         let root = "/Users/local.local/Projects/TradingSystem"
         runCommand("/usr/bin/nc", ["-z", "127.0.0.1", "8788"]) { code, _ in
@@ -317,8 +317,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 sweepStatus.stringValue = "Testing \(interval) · \(progressLabel.stringValue)"
                 if value["return_pct"] != nil {
                     let result = value["return_pct"] as? Double ?? 0
+                    let equity = value["ending_equity"] as? Double ?? 0
                     let trades = value["trades"] as? Int ?? 0
-                    self.output.string += "\n\(interval.padding(toLength: 10, withPad: " ", startingAt: 0)) \(String(format: "%+.3f%%", result).padding(toLength: 11, withPad: " ", startingAt: 0)) \(trades)"
+                    self.output.string += "\n\(interval.padding(toLength: 10, withPad: " ", startingAt: 0)) \(String(format: "%+.3f%%", result).padding(toLength: 11, withPad: " ", startingAt: 0)) \(String(format: "%.2f", equity).padding(toLength: 11, withPad: " ", startingAt: 0)) \(trades)"
                     self.output.scrollToEndOfDocument(nil)
                 }
             }

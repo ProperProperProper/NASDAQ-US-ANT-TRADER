@@ -8,11 +8,24 @@ import sqlite3
 import subprocess
 import sys
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "quant_dashboard.sqlite3"
 STATE = ROOT / ".research_scheduler_state.json"
 RERUN_INTERVAL = dt.timedelta(minutes=15)
+ET = ZoneInfo("America/New_York")
+
+
+def session_phase(now: dt.datetime) -> str:
+    """Return the US equity session phase for an aware timestamp."""
+    eastern = now.astimezone(ET)
+    clock = eastern.time()
+    if dt.time(7, 0) <= clock < dt.time(9, 30):
+        return "PREMARKET"
+    if dt.time(9, 30) <= clock < dt.time(16, 0):
+        return "RTH"
+    return "OFF_HOURS"
 
 
 def latest_session() -> str | None:
@@ -49,14 +62,20 @@ def main() -> int:
         except (OSError, json.JSONDecodeError):
             previous = {}
     now = dt.datetime.now(dt.timezone.utc)
+    phase = session_phase(now)
+    if phase == "OFF_HOURS":
+        print(json.dumps({"state": "SKIPPED", "session": session, "phase": phase, "reason": "outside premarket and regular session"}), flush=True)
+        return 0
     if not rerun_due(previous, session, now):
         finished_at = previous.get("finished_at")
-        print(json.dumps({"state": "SKIPPED", "session": session, "reason": "rerun not due", "rerun_interval_minutes": 15, "last_finished_at": finished_at}), flush=True)
+        print(json.dumps({"state": "SKIPPED", "session": session, "phase": phase, "reason": "rerun not due", "rerun_interval_minutes": 15, "last_finished_at": finished_at}), flush=True)
         return 0
-    STATE.write_text(json.dumps({"state": "RUNNING", "session": session, "started_at": now.isoformat()}, indent=2) + "\n")
-    command = ["/usr/bin/nice", "-n", "10", sys.executable, str(ROOT / "scripts/app_minute_interval_sweep.py"), "--start", "2020-01-01", "--end", dt.date.today().isoformat(), "--total-candidates", "100000", "--ai"]
+    budget = "100000" if phase == "PREMARKET" else "5000"
+    STATE.write_text(json.dumps({"state": "RUNNING", "session": session, "phase": phase, "started_at": now.isoformat()}, indent=2) + "\n")
+    eastern_date = now.astimezone(ET).date().isoformat()
+    command = ["/usr/bin/nice", "-n", "10", sys.executable, str(ROOT / "scripts/app_minute_interval_sweep.py"), "--start", "2020-01-01", "--end", eastern_date, "--total-candidates", budget, "--phase", phase, "--ai"]
     result = subprocess.run(command, cwd=ROOT, check=False)
-    payload = {"state": "COMPLETED" if result.returncode == 0 else "FAILED", "session": session, "exit_code": result.returncode, "finished_at": dt.datetime.now(dt.timezone.utc).isoformat()}
+    payload = {"state": "COMPLETED" if result.returncode == 0 else "FAILED", "session": session, "phase": phase, "exit_code": result.returncode, "finished_at": dt.datetime.now(dt.timezone.utc).isoformat()}
     if result.returncode == 0:
         payload["last_completed_session"] = session
         evolution = subprocess.run(["/usr/bin/nice", "-n", "10", sys.executable, str(ROOT / "scripts" / "autonomous_evolution.py")], cwd=ROOT, text=True, capture_output=True, check=False)

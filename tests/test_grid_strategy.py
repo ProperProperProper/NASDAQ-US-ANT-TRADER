@@ -5,6 +5,7 @@ import pandas as pd
 from strategy_57pct import add_features, run, strategy_signal
 from minute_bars import aggregate_us_session
 from scripts.app_minute_interval_sweep import promotion_gate
+from scripts.research_scheduler import session_phase
 
 
 class GridStrategyTests(unittest.TestCase):
@@ -32,6 +33,17 @@ class GridStrategyTests(unittest.TestCase):
         self.assertGreaterEqual(len(trades), 1)
         self.assertIn("OPEN_CROSSED_GRID_DOWN", {trade.reason for trade in trades})
 
+    def test_trailing_stop_is_supported(self):
+        index = pd.date_range("2026-01-01", periods=12, freq="10min")
+        openings = [90, 90, 90, 90, 90, 90, 90, 101, 102, 101.4, 101.5, 101.5]
+        candles = pd.DataFrame(
+            [{"open": value, "high": value, "low": value, "close": value, "volume": 1.0} for value in openings],
+            index=index,
+        )
+        params = {"grid_lookback": 3, "grid_intervals": 4, "trailing_activation_pct": 0.009, "trailing_stop_pct": 0.005}
+        _, trades, _ = run(candles, params, slippage_bps=0)
+        self.assertTrue(any(trade.reason == "TRAILING_STOP" for trade in trades))
+
     def test_live_signal_uses_latest_completed_bar(self):
         frame = self.candles()
         signal = strategy_signal(frame, {"grid_lookback": 3, "grid_intervals": 4})
@@ -51,6 +63,11 @@ class GridStrategyTests(unittest.TestCase):
         self.assertFalse(promotion_gate(winner, 1)[0])
         self.assertFalse(promotion_gate({"evidence": "WEAK", "best": {"stats": {"trades": 2}}}, 2)[0])
         self.assertFalse(promotion_gate({"evidence": "NORMAL", "best": {"stats": {"trades": 1}}}, 2)[0])
+
+    def test_research_phases_use_us_eastern_market_hours(self):
+        self.assertEqual(session_phase(pd.Timestamp("2026-01-05 12:00", tz="UTC").to_pydatetime()), "PREMARKET")
+        self.assertEqual(session_phase(pd.Timestamp("2026-01-05 15:00", tz="UTC").to_pydatetime()), "RTH")
+        self.assertEqual(session_phase(pd.Timestamp("2026-01-05 22:00", tz="UTC").to_pydatetime()), "OFF_HOURS")
 
 
 if __name__ == "__main__":
