@@ -1,0 +1,3 @@
+[submodule "mlx-sentinel"]
+	path = mlx-sentinel
+	url = https://github.com/ProperProperProper/mlx-sentinel.git
