@@ -250,6 +250,29 @@ class CompetitionBot:
                     return value
         raise RuntimeError(f"snapshot returned no positive price for {symbol}: {list(data.columns)}")
 
+    def market_bid(self, symbol: str) -> float:
+        ret, data = self.quote.get_market_snapshot([symbol])
+        if ret != RET_OK or data.empty:
+            raise RuntimeError(f"snapshot failed for {symbol}: {data}")
+        bid = scalar(data.iloc[0].get("bid_price"))
+        return bid if bid > 0 else self.market_price(symbol)
+
+    def record_position_mark(self, symbol: str, qty: float, avg: float) -> None:
+        if qty <= 0 or avg <= 0:
+            self.state.pop("position_mark", None)
+            self._save_state()
+            return
+        mark = self.market_bid(symbol)
+        self.state["position_mark"] = {
+            "symbol": symbol,
+            "qty": int(qty),
+            "avg_price": avg,
+            "mark_price": mark,
+            "gross_unrealized_pnl": round((mark - avg) * qty, 2),
+            "mark_time": datetime.now(ET).isoformat(),
+        }
+        self._save_state()
+
     def candles(self, symbol: str) -> pd.DataFrame:
         now = datetime.now()
         start = (now - timedelta(days=14)).strftime("%Y-%m-%d")
@@ -349,6 +372,8 @@ class CompetitionBot:
                         if filled:
                             self.state["pending"].pop(symbol, None)
                             self._save_state()
+                    qty, avg = self.position(symbol)
+                    self.record_position_mark(symbol, qty, avg)
                     logging.info("no new source candle symbol=%s bar=%s", symbol, source_bar)
                     continue
                 signal_data = strategy_api.signal(candles, params)
@@ -361,6 +386,7 @@ class CompetitionBot:
                 qty, avg = self.position(symbol)
                 logging.info("querying snapshot symbol=%s", symbol)
                 price = self.market_price(symbol)
+                self.record_position_mark(symbol, qty, avg)
                 exit_signal = bool(signal_data.get("exit_signal", signal_data.get("trend_exit", False)))
                 logging.info("%s bar=%s price=%.4f position=%.4f signal=%s exit=%s", symbol, signal_data["bar"], price, qty, signal_data["long_signal"], exit_signal)
 

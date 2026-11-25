@@ -46,6 +46,7 @@ PAPER_TRADING_ENABLED = True
 EXTERNAL_BOT_LABEL = "com.local.nasdaq-paper-bot"
 PAPER_BOT_PLIST = Path.home() / "Library/LaunchAgents/com.local.nasdaq-paper-bot.plist"
 PAPER_ACCOUNT_ID = STANDARD_PAPER_ACCOUNT_ID
+BOT_STATE_PATH = ROOT / "competition_bot_state.json"
 INSTANCE_LOCK_PATH = Path(__file__).with_name("quant_dashboard.lock")
 SYMBOL = "US.ANT"
 INTERVAL_MINUTES = 1440
@@ -114,6 +115,11 @@ def fetch_moomoo_candles(symbol: str, start: str, end: str, interval_minutes: in
 
 
 def execution_status() -> dict[str, Any]:
+    position_mark = {}
+    try:
+        position_mark = json.loads(BOT_STATE_PATH.read_text()).get("position_mark", {})
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        pass
     with bot_lock:
         active = bot_instance is not None and bot_instance.running
         status = {
@@ -122,6 +128,7 @@ def execution_status() -> dict[str, Any]:
             "account_index": bot_instance.acc_index if bot_instance else None,
             "account_id": bot_instance.acc_id if bot_instance else None,
             "mode": "SIMULATE" if active else "STOPPED",
+            "position": position_mark,
         }
     if active:
         return status
@@ -149,6 +156,7 @@ def execution_status() -> dict[str, Any]:
                 "source": "launchd",
                 "pid": int(pid) if pid and pid.isdigit() else None,
                 "bar_interval": bar_interval,
+                "position": position_mark,
             }
     except (OSError, subprocess.SubprocessError, ValueError):
         pass
