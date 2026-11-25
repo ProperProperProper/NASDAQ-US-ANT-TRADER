@@ -214,6 +214,20 @@ class CompetitionBot:
             raise RuntimeError(f"position query failed: {data}")
         return count_open_positions(data)
 
+    def pending_order_side(self, symbol: str) -> str | None:
+        """Return a live broker order side so restarts cannot duplicate orders."""
+        kwargs = {"trd_env": TrdEnv.SIMULATE, "acc_id": self.acc_id} if self.acc_id else {"trd_env": TrdEnv.SIMULATE, "acc_index": self.acc_index}
+        ret, data = self.trade.order_list_query(**kwargs)
+        if ret != RET_OK or data is None or data.empty or "code" not in data.columns:
+            return None
+        terminal = {"FILLED_ALL", "CANCELLED_ALL", "CANCELLED_PART", "FAILED", "DELETED", "CANCELLED"}
+        rows = data[data["code"].astype(str) == symbol]
+        rows = rows[~rows["order_status"].astype(str).str.upper().isin(terminal)] if "order_status" in rows.columns else rows.iloc[0:0]
+        if rows.empty or "trd_side" not in rows.columns:
+            return None
+        side = str(rows.sort_values("create_time").iloc[-1]["trd_side"]).upper()
+        return side if side in {"BUY", "SELL"} else None
+
     def market_price(self, symbol: str) -> float:
         ret, data = self.quote.get_market_snapshot([symbol])
         if ret != RET_OK or data.empty:
@@ -303,7 +317,10 @@ class CompetitionBot:
                 # and provider pressure.  Pending orders are still checked on
                 # every poll so paper fills are not held until the next bar.
                 if self.state["last_source_bar"].get(symbol) == source_bar:
-                    pending = self.state["pending"].get(symbol)
+                    pending = self.state["pending"].get(symbol) or self.pending_order_side(symbol)
+                    if pending and self.state["pending"].get(symbol) != pending:
+                        self.state["pending"][symbol] = pending
+                        self._save_state()
                     if pending:
                         qty, _ = self.position(symbol)
                         filled = (pending == "BUY" and qty > 0) or (pending == "SELL" and qty <= 0)
@@ -325,7 +342,10 @@ class CompetitionBot:
                 exit_signal = bool(signal_data.get("exit_signal", signal_data.get("trend_exit", False)))
                 logging.info("%s bar=%s price=%.4f position=%.4f signal=%s exit=%s", symbol, signal_data["bar"], price, qty, signal_data["long_signal"], exit_signal)
 
-                pending = self.state["pending"].get(symbol)
+                pending = self.state["pending"].get(symbol) or self.pending_order_side(symbol)
+                if pending and self.state["pending"].get(symbol) != pending:
+                    self.state["pending"][symbol] = pending
+                    self._save_state()
                 if pending:
                     filled = (pending == "BUY" and qty > 0) or (pending == "SELL" and qty <= 0)
                     if filled:
