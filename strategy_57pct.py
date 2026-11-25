@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass
+from datetime import time
 
 import numpy as np
 import pandas as pd
@@ -164,11 +165,13 @@ def run(candles: pd.DataFrame, params: dict = BASELINE, capital: float = 100000.
                 and peak_price >= position["entry"] * (1.0 + trailing_activation_pct)
             )
             trailing_stop = trailing_armed and price <= peak_price * (1.0 - trailing_stop_pct)
-            if take_profit or stop_loss or trailing_stop or bool(bar.close_signal):
+            session_exit = stamp.time() >= time(15, 30)
+            if take_profit or stop_loss or trailing_stop or session_exit or bool(bar.close_signal):
                 reason = (
                     "TAKE_PROFIT" if take_profit else
                     "STOP_LOSS" if stop_loss else
                     "TRAILING_STOP" if trailing_stop else
+                    "SESSION_EXIT_30M_BEFORE_CLOSE" if session_exit else
                     "OPEN_CROSSED_GRID_DOWN"
                 )
                 exit_price = price * (1.0 - slip)

@@ -28,6 +28,7 @@ import time
 from datetime import datetime, timedelta, time as dt_time
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 from moomoo import (
@@ -57,6 +58,9 @@ DEFAULT_BAR_INTERVAL = 10
 STANDARD_PAPER_ACCOUNT_ID = int(os.environ.get("US_ANT_PAPER_ACCOUNT_ID", "0"))
 ACTIVE_SYMBOL = "US.ANT"
 BAR_INTERVAL_TYPES = {minutes: KLType.K_1M for minutes in MINUTE_INTERVALS}
+ET = ZoneInfo("America/New_York")
+SESSION_EXIT_TIME = dt_time(15, 30)
+SESSION_CLOSE_TIME = dt_time(16, 0)
 STATE_PATH = Path(__file__).with_name("competition_bot_state.json")
 LOG_PATH = Path(__file__).with_name("competition_bot.log")
 
@@ -230,6 +234,11 @@ class CompetitionBot:
         side = str(rows.sort_values("create_time").iloc[-1]["trd_side"]).upper()
         return side if side in {"BUY", "SELL"} else None
 
+    @staticmethod
+    def session_exit_due() -> bool:
+        now = datetime.now(ET).time()
+        return SESSION_EXIT_TIME <= now < SESSION_CLOSE_TIME
+
     def market_price(self, symbol: str) -> float:
         ret, data = self.quote.get_market_snapshot([symbol])
         if ret != RET_OK or data.empty:
@@ -326,6 +335,14 @@ class CompetitionBot:
                         else:
                             self.state["pending"].pop(symbol, None)
                         self._save_state()
+                    if self.session_exit_due() and not pending:
+                        qty, _ = self.position(symbol)
+                        if qty > 0:
+                            self.submit(symbol, TrdSide.SELL, int(qty), "SESSION_EXIT_30M_BEFORE_CLOSE")
+                            self.state["pending"][symbol] = "SELL"
+                            self.peak_price = 0.0
+                            self._save_state()
+                            continue
                     if pending:
                         qty, _ = self.position(symbol)
                         filled = (pending == "BUY" and qty > 0) or (pending == "SELL" and qty <= 0)
@@ -380,13 +397,13 @@ class CompetitionBot:
                         and self.peak_price >= avg * (1.0 + trailing_activation_pct)
                     )
                     trailing_stop = trailing_armed and price <= self.peak_price * (1.0 - trailing_stop_pct)
-                    session_exit = bool(signal_data.get("session_exit", False))
+                    session_exit = self.session_exit_due() or bool(signal_data.get("session_exit", False))
                     if take_profit or stop_loss or trailing_stop or session_exit or exit_signal:
                         reason = (
                             "TAKE_PROFIT" if take_profit else
                             "STOP_LOSS" if stop_loss else
                             "TRAILING_STOP" if trailing_stop else
-                            "SESSION_EXIT" if session_exit else
+                            "SESSION_EXIT_30M_BEFORE_CLOSE" if session_exit else
                             "GRID_EXIT"
                         )
                         self.submit(symbol, TrdSide.SELL, int(qty), reason)

@@ -45,6 +45,16 @@ class GridStrategyTests(unittest.TestCase):
         _, trades, _ = run(candles, params, slippage_bps=0)
         self.assertTrue(any(trade.reason == "TRAILING_STOP" for trade in trades))
 
+    def test_backtest_exits_thirty_minutes_before_close(self):
+        index = pd.date_range("2026-01-05 15:20", periods=12, freq="1min")
+        openings = [90, 90, 90, 90, 90, 90, 90, 101, 101, 101, 101, 101]
+        candles = pd.DataFrame(
+            [{"open": value, "high": max(101, value), "low": min(79, value), "close": value, "volume": 1.0} for value in openings],
+            index=index,
+        )
+        _, trades, _ = run(candles, {"grid_lookback": 3, "grid_intervals": 4}, slippage_bps=0)
+        self.assertEqual(trades[-1].reason, "SESSION_EXIT_30M_BEFORE_CLOSE")
+
     def test_live_signal_uses_latest_completed_bar(self):
         frame = self.candles()
         signal = strategy_signal(frame, {"grid_lookback": 3, "grid_intervals": 4})
