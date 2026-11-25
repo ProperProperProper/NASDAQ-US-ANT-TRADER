@@ -116,8 +116,11 @@ def fetch_moomoo_candles(symbol: str, start: str, end: str, interval_minutes: in
 
 def execution_status() -> dict[str, Any]:
     position_mark = {}
+    persisted_interval = None
     try:
-        position_mark = json.loads(BOT_STATE_PATH.read_text()).get("position_mark", {})
+        bot_state = json.loads(BOT_STATE_PATH.read_text())
+        position_mark = bot_state.get("position_mark", {})
+        persisted_interval = bot_state.get("strategy_interval")
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         pass
     with bot_lock:
@@ -139,7 +142,7 @@ def execution_status() -> dict[str, Any]:
         )
         if result.returncode == 0 and "state = running" in result.stdout:
             pid = next((line.split("=", 1)[1].strip() for line in result.stdout.splitlines() if line.strip().startswith("pid =")), None)
-            bar_interval = DEFAULT_BAR_INTERVAL
+            bar_interval = int(persisted_interval) if persisted_interval in BAR_INTERVAL_TYPES else DEFAULT_BAR_INTERVAL
             try:
                 with PAPER_BOT_PLIST.open("rb") as handle:
                     args = plistlib.load(handle).get("ProgramArguments", [])
