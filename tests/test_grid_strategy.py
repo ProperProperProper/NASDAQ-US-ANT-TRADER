@@ -95,6 +95,10 @@ class GridStrategyTests(unittest.TestCase):
         self.assertEqual(MAX_OPEN_POSITIONS, 1)
         self.assertEqual(count_open_positions(positions), 3)
 
+    def test_open_position_limit_counts_short_holdings(self):
+        positions = pd.DataFrame({"code": ["US.ANT", "US.X"], "qty": [-6378, 0]})
+        self.assertEqual(count_open_positions(positions), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

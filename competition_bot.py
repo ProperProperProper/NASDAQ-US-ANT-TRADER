@@ -84,12 +84,12 @@ def scalar(value: Any, default: float = 0.0) -> float:
 
 
 def count_open_positions(data: pd.DataFrame) -> int:
-    """Count positive holdings returned by the SIMULATE position query."""
+    """Count nonzero holdings returned by the SIMULATE position query."""
     if data is None or data.empty:
         return 0
     count = 0
     for _, row in data.iterrows():
-        if scalar(row.get("qty", row.get("position", 0))) > 0:
+        if abs(scalar(row.get("qty", row.get("position", 0)))) > 0:
             count += 1
     return count
 
@@ -167,7 +167,7 @@ class CompetitionBot:
             if str(payload.get("symbol", "")).upper() != symbol:
                 return
             qty, _ = self.position(symbol)
-            if qty > 0 or self.pending_order_side(symbol):
+            if qty != 0 or self.pending_order_side(symbol):
                 return
             temporary = LIVE_STRATEGY_PATH.with_name(LIVE_STRATEGY_PATH.name + ".tmp")
             temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -296,6 +296,13 @@ class CompetitionBot:
         self._save_state()
         return mark
 
+    def block_short_position(self, symbol: str, qty: float, avg: float) -> None:
+        """Fail closed when an external sell creates an unsupported short."""
+        logging.error("short position detected; blocking strategy activity symbol=%s qty=%s", symbol, qty)
+        audit_api.event("SHORT_POSITION_BLOCKED", symbol, {"qty": qty, "avg": avg, "paper": True})
+        self.state["position_fault"] = {"symbol": symbol, "qty": qty, "reason": "SHORT_POSITION"}
+        self._save_state()
+
     def risk_exit_reason(self, price: float, qty: float, avg: float, params: dict[str, Any]) -> str | None:
         """Evaluate executable intrabar risk exits without consuming a signal bar."""
         if qty <= 0 or avg <= 0 or price <= 0:
@@ -420,6 +427,9 @@ class CompetitionBot:
                             self.state["pending"].pop(symbol, None)
                             self._save_state()
                     qty, avg = self.position(symbol)
+                    if qty < 0:
+                        self.block_short_position(symbol, qty, avg)
+                        continue
                     mark = self.record_position_mark(symbol, qty, avg)
                     risk_reason = self.risk_exit_reason(mark or 0.0, qty, avg, params)
                     if risk_reason and not pending:
@@ -440,6 +450,12 @@ class CompetitionBot:
                     continue
                 logging.info("querying position symbol=%s", symbol)
                 qty, avg = self.position(symbol)
+                if qty < 0:
+                    self.block_short_position(symbol, qty, avg)
+                    self.state["last_bar"][symbol] = signal_data["bar"]
+                    self.state["last_source_bar"][symbol] = source_bar
+                    self._save_state()
+                    continue
                 logging.info("querying snapshot symbol=%s", symbol)
                 price = self.market_price(symbol)
                 self.record_position_mark(symbol, qty, avg)

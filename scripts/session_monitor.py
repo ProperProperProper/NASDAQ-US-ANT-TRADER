@@ -44,7 +44,7 @@ def check() -> dict:
         row = accounts[accounts.acc_id.astype(str) == str(acct)] if ret == RET_OK else accounts.iloc[0:0]
         env = str(row.iloc[0].trd_env) if not row.empty else "MISSING"
         ret, positions = trade.position_list_query(trd_env=TrdEnv.SIMULATE, acc_id=acct)
-        held = positions[(positions.code.astype(str) == SYMBOL) & (positions.qty.astype(float) > 0)] if ret == RET_OK and not positions.empty else positions.iloc[0:0]
+        held = positions[(positions.code.astype(str) == SYMBOL) & (positions.qty.astype(float) != 0)] if ret == RET_OK and not positions.empty else positions.iloc[0:0]
         ret, orders = trade.order_list_query(trd_env=TrdEnv.SIMULATE, acc_id=acct)
         ant_orders = orders[orders.code.astype(str) == SYMBOL] if ret == RET_OK and not orders.empty else orders.iloc[0:0]
         active = ant_orders[~ant_orders.order_status.astype(str).str.upper().isin(TERMINAL)] if not ant_orders.empty else ant_orders
@@ -61,6 +61,7 @@ def check() -> dict:
             "research_count": process_count("continuous_research_scheduler.py"),
             "qty": int(float(held.iloc[0].qty)) if not held.empty else 0,
             "avg": float(held.iloc[0].cost_price) if not held.empty else 0.0,
+            "position_side": str(held.iloc[0].position_side) if not held.empty and "position_side" in held.columns else "FLAT",
             "active_orders": len(active),
             "bid": float(quote_row.bid_price) if quote_row is not None else None,
             "ask": float(quote_row.ask_price) if quote_row is not None else None,
@@ -81,7 +82,12 @@ def main() -> int:
             return 0
         try:
             value = check()
-            fault = value["environment"] != "SIMULATE" or value["bot_count"] != 1 or value["research_count"] > 1
+            fault = (
+                value["environment"] != "SIMULATE"
+                or value["bot_count"] != 1
+                or value["research_count"] > 1
+                or value["qty"] < 0
+            )
             value["state"] = "FAULT" if fault else "HEALTHY"
             compact = json.dumps(value, sort_keys=True, separators=(",", ":"))
             if compact != last or now.minute % 5 == 0:
