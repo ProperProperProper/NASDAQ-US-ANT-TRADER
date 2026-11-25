@@ -146,7 +146,7 @@ def execution_status() -> dict[str, Any]:
             try:
                 with PAPER_BOT_PLIST.open("rb") as handle:
                     args = plistlib.load(handle).get("ProgramArguments", [])
-                if "--bar-interval" in args:
+                if persisted_interval not in BAR_INTERVAL_TYPES and "--bar-interval" in args:
                     bar_interval = int(args[args.index("--bar-interval") + 1])
             except (OSError, ValueError, TypeError, IndexError):
                 pass
