@@ -15,6 +15,7 @@ DB = ROOT / "quant_dashboard.sqlite3"
 STATE = ROOT / ".research_scheduler_state.json"
 RERUN_INTERVAL = dt.timedelta(minutes=15)
 PREMARKET_CANDIDATES = "20000"
+PREMARKET_FAST_CANDIDATES = "500"
 RTH_CANDIDATES = "2000"
 ET = ZoneInfo("America/New_York")
 
@@ -82,11 +83,13 @@ def main() -> int:
         finished_at = previous.get("finished_at")
         print(json.dumps({"state": "SKIPPED", "session": session, "phase": phase, "reason": "rerun not due", "rerun_interval_minutes": 15, "last_finished_at": finished_at}), flush=True)
         return 0
-    budget = PREMARKET_CANDIDATES if phase == "PREMARKET" else RTH_CANDIDATES
+    eastern_now = now.astimezone(ET)
+    fast_premarket = phase == "PREMARKET" and eastern_now.time() >= dt.time(9, 15)
+    budget = PREMARKET_FAST_CANDIDATES if fast_premarket else (PREMARKET_CANDIDATES if phase == "PREMARKET" else RTH_CANDIDATES)
     STATE.write_text(json.dumps({"state": "RUNNING", "session": session, "phase": phase, "started_at": now.isoformat()}, indent=2) + "\n")
     eastern_date = now.astimezone(ET).date().isoformat()
     command = ["/usr/bin/nice", "-n", "10", sys.executable, str(ROOT / "scripts/app_minute_interval_sweep.py"), "--start", "2020-01-01", "--end", eastern_date, "--total-candidates", budget, "--phase", phase, "--ai"]
-    if phase == "RTH":
+    if phase == "RTH" or fast_premarket:
         command.extend(["--intervals", active_intervals()])
     result = subprocess.run(command, cwd=ROOT, check=False)
     payload = {"state": "COMPLETED" if result.returncode == 0 else "FAILED", "session": session, "phase": phase, "exit_code": result.returncode, "finished_at": dt.datetime.now(dt.timezone.utc).isoformat()}
