@@ -144,7 +144,9 @@ if new_best < old_best:
 
 
 def main() -> int:
-    dirty = [line for line in git("status", "--porcelain").splitlines() if not line.startswith("?? archive/")]
+    runtime_state = " M paper_bot_live_strategy.json"
+    dirty = [line for line in git("status", "--porcelain").splitlines()
+             if not line.startswith("?? archive/") and line != runtime_state]
     if dirty:
         print(json.dumps({"state": "SKIPPED", "reason": "main worktree is not clean"}))
         return 0
