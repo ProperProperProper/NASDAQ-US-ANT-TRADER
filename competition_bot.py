@@ -63,6 +63,7 @@ SESSION_EXIT_TIME = dt_time(15, 30)
 SESSION_CLOSE_TIME = dt_time(16, 0)
 STATE_PATH = Path(__file__).with_name("competition_bot_state.json")
 LOG_PATH = Path(__file__).with_name("competition_bot.log")
+PENDING_PROMOTION_PATH = Path(__file__).with_name("pending_paper_strategy_promotion.json")
 
 
 def setup_logging() -> None:
@@ -144,6 +145,7 @@ class CompetitionBot:
 
     def _strategy_config(self, symbol: str) -> tuple[int, dict[str, Any]]:
         """Reload the published paper interval and parameters on every cycle."""
+        self._apply_pending_promotion(symbol)
         try:
             payload = json.loads(LIVE_STRATEGY_PATH.read_text())
             interval = int(payload.get("interval"))
@@ -155,6 +157,26 @@ class CompetitionBot:
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             pass
         return self.bar_interval, dict(BASELINE)
+
+    def _apply_pending_promotion(self, symbol: str) -> None:
+        """Apply a deferred paper promotion only after the broker is flat."""
+        if not PENDING_PROMOTION_PATH.exists():
+            return
+        try:
+            payload = json.loads(PENDING_PROMOTION_PATH.read_text())
+            if str(payload.get("symbol", "")).upper() != symbol:
+                return
+            qty, _ = self.position(symbol)
+            if qty > 0 or self.pending_order_side(symbol):
+                return
+            temporary = LIVE_STRATEGY_PATH.with_name(LIVE_STRATEGY_PATH.name + ".tmp")
+            temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+            temporary.replace(LIVE_STRATEGY_PATH)
+            PENDING_PROMOTION_PATH.unlink()
+            logging.info("applied deferred paper promotion symbol=%s interval=%sm", symbol, payload.get("interval"))
+            save_execution_event("PAPER_PROMOTION_APPLIED", symbol, {"interval": payload.get("interval"), "run_id": payload.get("run_id"), "deferred": True, "paper": True})
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            logging.exception("deferred paper promotion could not be applied")
 
     def verify_sim_account(self) -> None:
         """Fail closed when the configured paper account is unavailable."""

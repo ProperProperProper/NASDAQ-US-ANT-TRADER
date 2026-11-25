@@ -29,6 +29,7 @@ RESEARCH_WORKERS = 1
 # The evaluator includes slippage and promotion is restricted to a profitable
 # candidate that beats the currently active parameters on the active interval.
 AUTO_PROMOTION_ENABLED = True
+PENDING_PROMOTION_PATH = ROOT / "pending_paper_strategy_promotion.json"
 _WORK_FRAME = None
 
 
@@ -234,6 +235,17 @@ def promote_winner(winner: dict) -> dict:
         "run_id": winner["run_id"], "updated_at": pd.Timestamp.now(tz="UTC").isoformat(),
         "mode": "SIMULATE",
     }
+    try:
+        state = json.loads((ROOT / "competition_bot_state.json").read_text())
+        marked_qty = float((state.get("position_mark") or {}).get("qty", 0) or 0)
+        pending = bool(state.get("pending"))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        marked_qty, pending = 0.0, False
+    if marked_qty > 0 or pending:
+        temporary = PENDING_PROMOTION_PATH.with_name(PENDING_PROMOTION_PATH.name + ".tmp")
+        temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+        temporary.replace(PENDING_PROMOTION_PATH)
+        return {"state": "DEFERRED_POSITION_OPEN", "reason": "promotion waits for flat broker position", "pending_path": str(PENDING_PROMOTION_PATH), **payload}
     temporary = strategy_path.with_name(strategy_path.name + ".tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
     temporary.replace(strategy_path)
