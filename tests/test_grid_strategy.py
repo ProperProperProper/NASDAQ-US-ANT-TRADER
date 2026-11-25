@@ -6,7 +6,7 @@ from strategy_57pct import add_features, run, strategy_signal
 from minute_bars import aggregate_us_session
 from scripts.app_minute_interval_sweep import promotion_gate
 from scripts.research_scheduler import session_phase
-from competition_bot import MAX_OPEN_POSITIONS, count_open_positions
+from competition_bot import CompetitionBot, MAX_OPEN_POSITIONS, count_open_positions
 
 
 class GridStrategyTests(unittest.TestCase):
@@ -44,6 +44,15 @@ class GridStrategyTests(unittest.TestCase):
         params = {"grid_lookback": 3, "grid_intervals": 4, "trailing_activation_pct": 0.009, "trailing_stop_pct": 0.005}
         _, trades, _ = run(candles, params, slippage_bps=0)
         self.assertTrue(any(trade.reason == "TRAILING_STOP" for trade in trades))
+
+    def test_live_risk_exits_are_evaluated_intrabar(self):
+        bot = CompetitionBot.__new__(CompetitionBot)
+        bot.peak_price = 0.0
+        params = {"take_profit_pct": 0.01, "stop_loss_pct": 0.0, "trailing_activation_pct": 0.0, "trailing_stop_pct": 0.0}
+        self.assertEqual(bot.risk_exit_reason(101.0, 100, 100.0, params), "TAKE_PROFIT")
+        bot.peak_price = 100.0
+        trailing = {"take_profit_pct": 0.0, "stop_loss_pct": 0.0, "trailing_activation_pct": 0.05, "trailing_stop_pct": 0.01}
+        self.assertEqual(bot.risk_exit_reason(98.0, 100, 90.0, trailing), "TRAILING_STOP")
 
     def test_backtest_exits_thirty_minutes_before_close(self):
         index = pd.date_range("2026-01-05 15:20", periods=12, freq="1min")

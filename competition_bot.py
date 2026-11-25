@@ -257,11 +257,11 @@ class CompetitionBot:
         bid = scalar(data.iloc[0].get("bid_price"))
         return bid if bid > 0 else self.market_price(symbol)
 
-    def record_position_mark(self, symbol: str, qty: float, avg: float) -> None:
+    def record_position_mark(self, symbol: str, qty: float, avg: float) -> float | None:
         if qty <= 0 or avg <= 0:
             self.state.pop("position_mark", None)
             self._save_state()
-            return
+            return None
         mark = self.market_bid(symbol)
         self.state["position_mark"] = {
             "symbol": symbol,
@@ -272,6 +272,31 @@ class CompetitionBot:
             "mark_time": datetime.now(ET).isoformat(),
         }
         self._save_state()
+        return mark
+
+    def risk_exit_reason(self, price: float, qty: float, avg: float, params: dict[str, Any]) -> str | None:
+        """Evaluate executable intrabar risk exits without consuming a signal bar."""
+        if qty <= 0 or avg <= 0 or price <= 0:
+            return None
+        if self.peak_price <= 0:
+            self.peak_price = max(avg, price)
+        self.peak_price = max(self.peak_price, price)
+        take_profit_pct = max(0.0, scalar(params.get("take_profit_pct"), 0.0274))
+        stop_loss_pct = max(0.0, scalar(params.get("stop_loss_pct"), 0.1324))
+        trailing_activation_pct = max(0.0, scalar(params.get("trailing_activation_pct"), 0.0))
+        trailing_stop_pct = max(0.0, scalar(params.get("trailing_stop_pct"), 0.0))
+        if take_profit_pct > 0 and price >= avg * (1.0 + take_profit_pct):
+            return "TAKE_PROFIT"
+        if stop_loss_pct > 0 and price <= avg * (1.0 - stop_loss_pct):
+            return "STOP_LOSS"
+        trailing_armed = (
+            trailing_activation_pct > 0
+            and trailing_stop_pct > 0
+            and self.peak_price >= avg * (1.0 + trailing_activation_pct)
+        )
+        if trailing_armed and price <= self.peak_price * (1.0 - trailing_stop_pct):
+            return "TRAILING_STOP"
+        return None
 
     def candles(self, symbol: str) -> pd.DataFrame:
         now = datetime.now()
@@ -359,7 +384,7 @@ class CompetitionBot:
                             self.state["pending"].pop(symbol, None)
                         self._save_state()
                     if self.session_exit_due() and not pending:
-                        qty, _ = self.position(symbol)
+                        qty, avg = self.position(symbol)
                         if qty > 0:
                             self.submit(symbol, TrdSide.SELL, int(qty), "SESSION_EXIT_30M_BEFORE_CLOSE")
                             self.state["pending"][symbol] = "SELL"
@@ -373,7 +398,16 @@ class CompetitionBot:
                             self.state["pending"].pop(symbol, None)
                             self._save_state()
                     qty, avg = self.position(symbol)
-                    self.record_position_mark(symbol, qty, avg)
+                    mark = self.record_position_mark(symbol, qty, avg)
+                    risk_reason = self.risk_exit_reason(mark or 0.0, qty, avg, params)
+                    if risk_reason and not pending:
+                        self.submit(symbol, TrdSide.SELL, int(qty), risk_reason)
+                        self.state["pending"][symbol] = "SELL"
+                        self.peak_price = 0.0
+                        self.break_even_armed = False
+                        self.profit_lock_armed = False
+                        self._save_state()
+                        continue
                     logging.info("no new source candle symbol=%s bar=%s", symbol, source_bar)
                     continue
                 signal_data = strategy_api.signal(candles, params)
@@ -411,27 +445,10 @@ class CompetitionBot:
                     if self.peak_price <= 0:
                         self.peak_price = max(avg, price)
                     self.peak_price = max(self.peak_price, price)
-                    take_profit_pct = max(0.0, scalar(params.get("take_profit_pct"), 0.0274))
-                    stop_loss_pct = max(0.0, scalar(params.get("stop_loss_pct"), 0.1324))
-                    trailing_activation_pct = max(0.0, scalar(params.get("trailing_activation_pct"), 0.0))
-                    trailing_stop_pct = max(0.0, scalar(params.get("trailing_stop_pct"), 0.0))
-                    take_profit = take_profit_pct > 0 and price >= avg * (1.0 + take_profit_pct)
-                    stop_loss = stop_loss_pct > 0 and price <= avg * (1.0 - stop_loss_pct)
-                    trailing_armed = (
-                        trailing_activation_pct > 0
-                        and trailing_stop_pct > 0
-                        and self.peak_price >= avg * (1.0 + trailing_activation_pct)
-                    )
-                    trailing_stop = trailing_armed and price <= self.peak_price * (1.0 - trailing_stop_pct)
+                    risk_reason = self.risk_exit_reason(price, qty, avg, params)
                     session_exit = self.session_exit_due() or bool(signal_data.get("session_exit", False))
-                    if take_profit or stop_loss or trailing_stop or session_exit or exit_signal:
-                        reason = (
-                            "TAKE_PROFIT" if take_profit else
-                            "STOP_LOSS" if stop_loss else
-                            "TRAILING_STOP" if trailing_stop else
-                            "SESSION_EXIT_30M_BEFORE_CLOSE" if session_exit else
-                            "GRID_EXIT"
-                        )
+                    if risk_reason or session_exit or exit_signal:
+                        reason = risk_reason or ("SESSION_EXIT_30M_BEFORE_CLOSE" if session_exit else "GRID_EXIT")
                         self.submit(symbol, TrdSide.SELL, int(qty), reason)
                         self.state["pending"][symbol] = "SELL"
                         self.peak_price = 0.0
