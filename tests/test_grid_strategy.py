@@ -1,4 +1,6 @@
 import unittest
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -7,6 +9,9 @@ from minute_bars import aggregate_us_session
 from scripts.app_minute_interval_sweep import promotion_gate
 from scripts.research_scheduler import session_phase
 from competition_bot import CompetitionBot, MAX_OPEN_POSITIONS, count_open_positions
+
+
+ET = ZoneInfo("America/New_York")
 
 
 class GridStrategyTests(unittest.TestCase):
@@ -53,6 +58,11 @@ class GridStrategyTests(unittest.TestCase):
         bot.peak_price = 100.0
         trailing = {"take_profit_pct": 0.0, "stop_loss_pct": 0.0, "trailing_activation_pct": 0.05, "trailing_stop_pct": 0.01}
         self.assertEqual(bot.risk_exit_reason(98.0, 100, 90.0, trailing), "TRAILING_STOP")
+
+    def test_session_exit_persists_no_reentry_lock(self):
+        bot = object.__new__(CompetitionBot)
+        bot.state = {"session_exit_date": {"US.ANT": datetime.now(ET).date().isoformat()}}
+        self.assertTrue(bot.session_reentry_blocked("US.ANT"))
 
     def test_backtest_exits_thirty_minutes_before_close(self):
         index = pd.date_range("2026-01-05 15:20", periods=12, freq="1min")

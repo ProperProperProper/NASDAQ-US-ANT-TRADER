@@ -261,6 +261,14 @@ class CompetitionBot:
         now = datetime.now(ET).time()
         return SESSION_EXIT_TIME <= now < SESSION_CLOSE_TIME
 
+    def session_reentry_blocked(self, symbol: str) -> bool:
+        """Prevent a fresh entry after this session's mandatory exit."""
+        exit_date = self.state.get("session_exit_date", {}).get(symbol)
+        return bool(exit_date and exit_date == datetime.now(ET).date().isoformat())
+
+    def mark_session_exit(self, symbol: str) -> None:
+        self.state.setdefault("session_exit_date", {})[symbol] = datetime.now(ET).date().isoformat()
+
     def market_price(self, symbol: str) -> float:
         ret, data = self.quote.get_market_snapshot([symbol])
         if ret != RET_OK or data.empty:
@@ -415,6 +423,7 @@ class CompetitionBot:
                     if self.session_exit_due() and not pending:
                         qty, avg = self.position(symbol)
                         if qty > 0:
+                            self.mark_session_exit(symbol)
                             self.submit(symbol, TrdSide.SELL, int(qty), "SESSION_EXIT_30M_BEFORE_CLOSE")
                             self.state["pending"][symbol] = "SELL"
                             self.peak_price = 0.0
@@ -487,11 +496,20 @@ class CompetitionBot:
                     session_exit = self.session_exit_due() or bool(signal_data.get("session_exit", False))
                     if risk_reason or session_exit or exit_signal:
                         reason = risk_reason or ("SESSION_EXIT_30M_BEFORE_CLOSE" if session_exit else "GRID_EXIT")
+                        if session_exit:
+                            self.mark_session_exit(symbol)
                         self.submit(symbol, TrdSide.SELL, int(qty), reason)
                         self.state["pending"][symbol] = "SELL"
                         self.peak_price = 0.0
                         self.break_even_armed = False
                         self.profit_lock_armed = False
+                    self.state["last_bar"][symbol] = signal_data["bar"]
+                    self.state["last_source_bar"][symbol] = source_bar
+                    self._save_state()
+                    continue
+
+                if self.session_reentry_blocked(symbol):
+                    logging.info("entry blocked symbol=%s reason=SESSION_EXIT_REENTRY_BLOCK", symbol)
                     self.state["last_bar"][symbol] = signal_data["bar"]
                     self.state["last_source_bar"][symbol] = source_bar
                     self._save_state()
