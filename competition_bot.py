@@ -218,7 +218,9 @@ class CompetitionBot:
         """Return a live broker order side so restarts cannot duplicate orders."""
         kwargs = {"trd_env": TrdEnv.SIMULATE, "acc_id": self.acc_id} if self.acc_id else {"trd_env": TrdEnv.SIMULATE, "acc_index": self.acc_index}
         ret, data = self.trade.order_list_query(**kwargs)
-        if ret != RET_OK or data is None or data.empty or "code" not in data.columns:
+        if ret != RET_OK:
+            raise RuntimeError(f"order query failed: {data}")
+        if data is None or data.empty or "code" not in data.columns:
             return None
         terminal = {"FILLED_ALL", "CANCELLED_ALL", "CANCELLED_PART", "FAILED", "DELETED", "CANCELLED"}
         rows = data[data["code"].astype(str) == symbol]
@@ -317,9 +319,12 @@ class CompetitionBot:
                 # and provider pressure.  Pending orders are still checked on
                 # every poll so paper fills are not held until the next bar.
                 if self.state["last_source_bar"].get(symbol) == source_bar:
-                    pending = self.state["pending"].get(symbol) or self.pending_order_side(symbol)
-                    if pending and self.state["pending"].get(symbol) != pending:
-                        self.state["pending"][symbol] = pending
+                    pending = self.pending_order_side(symbol)
+                    if pending != self.state["pending"].get(symbol):
+                        if pending:
+                            self.state["pending"][symbol] = pending
+                        else:
+                            self.state["pending"].pop(symbol, None)
                         self._save_state()
                     if pending:
                         qty, _ = self.position(symbol)
@@ -342,9 +347,12 @@ class CompetitionBot:
                 exit_signal = bool(signal_data.get("exit_signal", signal_data.get("trend_exit", False)))
                 logging.info("%s bar=%s price=%.4f position=%.4f signal=%s exit=%s", symbol, signal_data["bar"], price, qty, signal_data["long_signal"], exit_signal)
 
-                pending = self.state["pending"].get(symbol) or self.pending_order_side(symbol)
-                if pending and self.state["pending"].get(symbol) != pending:
-                    self.state["pending"][symbol] = pending
+                pending = self.pending_order_side(symbol)
+                if pending != self.state["pending"].get(symbol):
+                    if pending:
+                        self.state["pending"][symbol] = pending
+                    else:
+                        self.state["pending"].pop(symbol, None)
                     self._save_state()
                 if pending:
                     filled = (pending == "BUY" and qty > 0) or (pending == "SELL" and qty <= 0)
