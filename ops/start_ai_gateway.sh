@@ -14,9 +14,9 @@ export NVIDIA_REQUEST_TIMEOUT="${NVIDIA_REQUEST_TIMEOUT:-15}"
 export MLX_REQUEST_TIMEOUT="${MLX_REQUEST_TIMEOUT:-10}"
 export MULTI_MODEL_GATEWAY_TOOL_TIMEOUT="${MULTI_MODEL_GATEWAY_TOOL_TIMEOUT:-120}"
 # MLX is the primary gateway backend; NVIDIA is used only on local failure.
-export AI_PROVIDER="${AI_PROVIDER:-auto}"
+export AI_PROVIDER="${AI_PROVIDER:-local}"
 export AI_LOCAL_MAX_DIFFICULTY="${AI_LOCAL_MAX_DIFFICULTY:-255}"
-export MLX_MODEL="${MLX_MODEL:-mlx-community/Qwen3-0.6B-4bit}"
+export MLX_MODEL="${MLX_MODEL:-mlx-community/gpt-oss-20b-MXFP4-Q4}"
 # Use MLX Sentinel's bounded OpenAI-compatible server. The stock mlx_lm.server
 # currently spins at ~100% CPU while idle on this Mac.
 export MLX_BASE_URL="${MLX_BASE_URL:-http://127.0.0.1:8081/v1}"

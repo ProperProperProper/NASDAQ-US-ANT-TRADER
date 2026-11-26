@@ -5,7 +5,7 @@ use std::sync::{
     Arc, Mutex,
 };
 
-// Qwen3 0.6B KV maxima can be several hundred on normal short responses.
+// GPT-OSS 20B KV maxima vary substantially with reasoning depth and context.
 // Keep a hard ceiling for clearly invalid/extreme telemetry, while relying on
 // the adaptive baseline for model-specific anomaly detection below it.
 const MAX_KV_NORM_HARD_LIMIT: f64 = 1_000.0;

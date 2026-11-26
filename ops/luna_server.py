@@ -18,7 +18,7 @@ from urllib.request import Request, urlopen
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("LUNA_PORT", "11435"))
-UPSTREAM = os.environ.get("LUNA_UPSTREAM_URL", "http://127.0.0.1:8080").rstrip("/")
+UPSTREAM = os.environ.get("LUNA_UPSTREAM_URL", "http://127.0.0.1:8081").rstrip("/")
 TIMEOUT = float(os.environ.get("LUNA_UPSTREAM_TIMEOUT", "120"))
 
 

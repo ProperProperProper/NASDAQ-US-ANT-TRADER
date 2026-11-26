@@ -29,7 +29,7 @@ mod context;
 mod graph;
 mod security;
 
-const LOCAL_URL: &str = "http://127.0.0.1:8080/v1";
+const LOCAL_URL: &str = "http://127.0.0.1:8081/v1";
 const NVIDIA_URL: &str = "https://integrate.api.nvidia.com/v1";
 const NVIDIA_MODEL: &str = "nvidia/nemotron-3.5-lightning-30b-a3b";
 const NVIDIA_FAST_MODEL: &str = "nvidia/nemotron-3.5-bolt-e4b";
@@ -80,7 +80,7 @@ enum Commands {
     MlxStart {
         #[arg(long)]
         model: String,
-        #[arg(long, default_value_t = 8080)]
+        #[arg(long, default_value_t = 8081)]
         port: u16,
     },
     Cluster {
@@ -1112,7 +1112,7 @@ async fn call_upstream(
             }
             // Enforce bounded MLX responses at the final upstream boundary.
             // This avoids losing the hint while converting the public request
-            // type and prevents controller calls from paying for hidden Qwen
+            // type and prevents controller calls from paying for hidden GPT-OSS
             // reasoning tokens.
             body.insert(
                 "chat_template_kwargs".into(),
@@ -1550,7 +1550,7 @@ async fn chat(
         }
     }
     // Keep bounded controller calls from spending their output budget on
-    // hidden Qwen reasoning. The direct MLX server supports this hint, so the
+    // hidden GPT-OSS reasoning. The direct MLX server supports this hint, so the
     // gateway must enforce it on the local route as well; callers can still
     // override it explicitly for ordinary interactive requests.
     if preferred == "local" {
@@ -1899,7 +1899,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(Commands::Status) => println!(
             "{}",
             serde_json::to_string_pretty(
-                &json!({"service":"Multi-Model AI Gateway","gateway":"http://127.0.0.1:8788","mlx":"http://127.0.0.1:8080/v1","nvidia":"https://integrate.api.nvidia.com/v1","rdma":"MLX JACCL over Thunderbolt 5"})
+                &json!({"service":"Multi-Model AI Gateway","gateway":"http://127.0.0.1:8788","mlx":"http://127.0.0.1:8081/v1","nvidia":"https://integrate.api.nvidia.com/v1","rdma":"MLX JACCL over Thunderbolt 5"})
             )?
         ),
         Some(Commands::Models) => {

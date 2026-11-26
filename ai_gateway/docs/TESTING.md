@@ -18,7 +18,7 @@ Run live checks after both launchd services are running:
 ```sh
 curl -fsS http://127.0.0.1:8788/health
 curl -fsS http://127.0.0.1:8788/api/status
-curl -fsS http://127.0.0.1:8080/v1/models
+curl -fsS http://127.0.0.1:8081/v1/models
 curl -fsS http://127.0.0.1:8788/v1/models
 ```
 

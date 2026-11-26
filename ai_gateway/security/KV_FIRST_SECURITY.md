@@ -68,7 +68,7 @@ Example:
 
 ```json
 {
-  "model": "mlx-community/Qwen3-0.6B-4bit",
+  "model": "mlx-community/gpt-oss-20b-MXFP4-Q4",
   "pages": 32,
   "cache_tokens": 512,
   "mean_norm": 1.2,

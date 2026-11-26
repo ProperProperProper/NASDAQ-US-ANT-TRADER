@@ -10,7 +10,7 @@
 | `/metrics` | Prometheus-compatible counters and latency gauges |
 | `/v1/models` | OpenAI-compatible model inventory |
 | `/v1/chat/completions` | OpenAI-compatible chat API |
-| `http://127.0.0.1:8080/v1` | MLX upstream server |
+| `http://127.0.0.1:8081/v1` | MLX Sentinel GPT-OSS upstream server |
 
 ## Persistent services
 
@@ -48,7 +48,7 @@ If `/v1/models` works but a completion hangs:
 1. inspect `logs/gateway-mlx.err` for model-load errors;
 2. restart `com.multi-model-ai-gateway.mlx`;
 3. wait for `/v1/models` to return the configured model;
-4. test `/v1/chat/completions` directly on port 8080;
+4. test `/v1/chat/completions` directly on port 8081;
 5. retest the gateway on port 8788.
 
 This recovery is safe because MLX is supervised by launchd. A model-list response alone is not proof that generation is ready; always test a completion after a model reload.

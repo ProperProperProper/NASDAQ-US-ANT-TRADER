@@ -42,7 +42,7 @@ MULTI_MODEL_GATEWAY_SECURITY_AGENT_MODE=guard
 Inspect status at `GET /api/security`. A future MLX runtime adapter can send aggregate telemetry to `POST /api/security/kv`:
 
 ```json
-{"model":"mlx-community/Qwen3-0.6B-4bit","pages":32,"cache_tokens":512,"mean_norm":1.2,"max_norm":4.1,"attention_entropy":0.8}
+{"model":"mlx-community/gpt-oss-20b-MXFP4-Q4","pages":32,"cache_tokens":512,"mean_norm":1.2,"max_norm":4.1,"attention_entropy":0.8}
 ```
 
 The multi-agent lab records the guard state in `security.json` for every run. It does not bypass the gateway security layer.

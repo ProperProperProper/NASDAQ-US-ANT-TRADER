@@ -6,7 +6,7 @@ VENV="$ROOT/.venv-multi-model-gateway"
 if [[ ! -x "$VENV/bin/mlx_lm.server" ]]; then
   VENV="$ROOT/mlx-sentinel/.venv"
 fi
-MODEL="${MULTI_MODEL_GATEWAY_MLX_MODEL:-mlx-community/Qwen3-0.6B-4bit}"
+MODEL="${MULTI_MODEL_GATEWAY_MLX_MODEL:-mlx-community/gpt-oss-20b-MXFP4-Q4}"
 
 cd "$ROOT"
 if command -v sandbox-exec >/dev/null 2>&1; then

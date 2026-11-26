@@ -10,7 +10,7 @@ Browser / CLI / OpenAI client
      |       |       |
      v       v       v
    MLX     Apple   NVIDIA
-  :8080   Swift    NIM API
+  :8081   MLX Sentinel GPT-OSS API
             |
             +-- Private Cloud Compute when available
             +-- on-device Foundation Models when explicitly selected
