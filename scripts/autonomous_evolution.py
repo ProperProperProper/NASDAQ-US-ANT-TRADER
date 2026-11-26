@@ -35,7 +35,7 @@ def git(*args: str, cwd: Path = ROOT, check: bool = True) -> str:
 
 def ask(prompt: str) -> str:
     request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
-        "name": "gateway_chat", "arguments": {"prompt": prompt, "provider": "auto", "max_tokens": 4096}
+        "name": "gateway_chat", "arguments": {"prompt": prompt, "provider": "local", "max_tokens": 128}
     }}
     payload = json.dumps({"jsonrpc": "2.0", "id": 0, "method": "initialize"}) + "\n" + json.dumps(request) + "\n"
     result = subprocess.run([sys.executable, str(MCP)], input=payload, text=True, capture_output=True, cwd=ROOT, check=False)

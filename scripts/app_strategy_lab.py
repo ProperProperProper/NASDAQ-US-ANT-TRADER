@@ -46,7 +46,7 @@ class MCPClient:
     def __init__(self, _server: Path, gateway: str):
         self.gateway = gateway.rstrip("/")
 
-    def ask(self, prompt: str, provider: str = "nvidia", max_tokens: int = 120) -> str:
+    def ask(self, prompt: str, provider: str = "local", max_tokens: int = 120) -> str:
         payload = {"model": "auto", "messages": [{"role": "user", "content": prompt}],
                    "max_tokens": max_tokens, "extra_body": {"provider": provider}}
         request = Request(self.gateway + "/v1/chat/completions", data=json.dumps(payload).encode(),
@@ -143,7 +143,7 @@ def parse_proposal(text: str) -> dict | None:
     return None
 
 
-def ask_agent(client: MCPClient | None, antigravity: AntigravityOptimizer | None, provider: str, profile: dict, parents: list[dict], role: str, nvidia_proposals: list[dict] | None = None) -> dict | None:
+def ask_agent(client: MCPClient | None, antigravity: AntigravityOptimizer | None, provider: str, profile: dict, parents: list[dict], role: str, local_proposals: list[dict] | None = None) -> dict | None:
     prompt = (
         "You are an independent mutation agent for the US.ANT Moomoo paper bot. "
         "The active strategy is a causal 10-minute candle-open price grid. "
@@ -156,7 +156,7 @@ def ask_agent(client: MCPClient | None, antigravity: AntigravityOptimizer | None
         "locally tested configuration. Do not invent performance claims. "
         f"Role: {role}. DATA PROFILE: {json.dumps(profile)} "
         f"PARENTS: {json.dumps(parents[:5])} "
-        f"NVIDIA_PROPOSALS_FOR_CONTROLLER: {json.dumps(nvidia_proposals or [])} "
+        f"LOCAL_PROPOSALS_FOR_CONTROLLER: {json.dumps(local_proposals or [])} "
         "Return JSON only, for example {\"grid_lookback\": 45}."
     )
     try:
@@ -215,16 +215,16 @@ def main() -> int:
             with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.agents)) as pool:
                 jobs = [pool.submit(lambda seed: [evaluate(train, mutate(random.Random(seed), random.choice(parents))) for _ in range(args.candidates)], 900000 + round_number * 100 + i) for i in range(args.agents)]
                 candidates = [item for job in jobs for item in job.result()]
-            nvidia_proposals = []
+            local_proposals = []
             if client:
                 for agent in range(max(1, args.agents)):
                     proposal = ask_agent(client, None, "nvidia", profile, parents, ["explorer", "critic", "risk reviewer"][agent % 3])
                     if proposal:
-                        nvidia_proposals.append(proposal)
+                        local_proposals.append(proposal)
             if antigravity:
-                configured_parents = parents + nvidia_proposals
+                configured_parents = parents + local_proposals
                 for agent in range(max(1, args.agents)):
-                    proposal = ask_agent(None, antigravity, "antigravity", profile, configured_parents, "true controller: choose, constrain, and configure one NVIDIA proposal for local deterministic testing", nvidia_proposals)
+                    proposal = ask_agent(None, antigravity, "antigravity", profile, configured_parents, "true controller: choose, constrain, and configure one local proposal for deterministic testing", local_proposals)
                     if proposal:
                         candidates.append(evaluate(train, proposal))
             candidates.append(evaluate(train, dict(BASELINE)))
@@ -235,7 +235,7 @@ def main() -> int:
             selected = validation_candidates[0]
             final = evaluate(test, selected["params"])
             promoted = write_live_strategy("US.ANT", 10, selected["params"], f"ANT-{run_dir.name}-r{round_number:03d}")
-            result = {"round": round_number, "profile": profile, "train_best": candidates[0], "selected_validation": selected, "final_test": final, "promoted": promoted, "agent_mutation": bool(client or antigravity), "proposal_provider": "nvidia" if client else None, "configuration_provider": "antigravity" if antigravity else None, "nvidia_proposals": nvidia_proposals}
+            result = {"round": round_number, "profile": profile, "train_best": candidates[0], "selected_validation": selected, "final_test": final, "promoted": promoted, "agent_mutation": bool(client or antigravity), "proposal_provider": "local" if client else None, "configuration_provider": "local" if antigravity else None, "local_proposals": local_proposals}
             (run_dir / f"round-{round_number:03d}.json").write_text(json.dumps(result, indent=2, default=str) + "\n")
             write_status(status_file, {"state": "RUNNING", **result, "run_dir": str(run_dir)})
             print(json.dumps({"round": round_number, "train": candidates[0]["stats"], "validation": selected["stats"], "test": final["stats"], "promoted": promoted}), flush=True)

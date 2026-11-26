@@ -29,6 +29,8 @@ RESEARCH_WORKERS = 1
 # The evaluator includes slippage and promotion is restricted to a profitable
 # candidate that beats the currently active parameters on the active interval.
 AUTO_PROMOTION_ENABLED = True
+MIN_PROMOTION_SESSIONS = 2
+MIN_PROMOTION_TRADES = 2
 PENDING_PROMOTION_PATH = ROOT / "pending_paper_strategy_promotion.json"
 _WORK_FRAME = None
 
@@ -168,7 +170,7 @@ def ai_candidates(interval: int) -> list[dict]:
     # Structured candidate extraction needs a stronger instruction-following
     # backend than the tiny local model; keep ordinary chat on auto routing,
     # but use the verified NVIDIA free endpoint for this bounded JSON task.
-    mcp_request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "gateway_chat", "arguments": {"prompt": prompt, "provider": "nvidia", "max_tokens": 700}}}
+    mcp_request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "gateway_chat", "arguments": {"prompt": prompt, "provider": "local", "max_tokens": 128}}}
     completed = subprocess.run(
         [sys.executable, str(ROOT / "ai_gateway/ai/mcp_server.py")],
         input=json.dumps(mcp_request) + "\n", capture_output=True, text=True, timeout=90, check=False,
@@ -256,11 +258,15 @@ def promote_winner(winner: dict) -> dict:
     return payload
 
 
-def promotion_gate(winner: dict | None, current_stats: dict | None = None) -> tuple[bool, str]:
+def promotion_gate(winner: dict | None, current_stats: dict | None = None, completed_sessions: int = 0) -> tuple[bool, str]:
     """Allow a profitable, strictly better paper-only candidate to activate."""
     if winner is None:
         return False, "no eligible winner"
     stats = winner.get("best", {}).get("stats", {})
+    if completed_sessions < MIN_PROMOTION_SESSIONS:
+        return False, f"requires at least {MIN_PROMOTION_SESSIONS} completed sessions"
+    if int(stats.get("trades", 0) or 0) < MIN_PROMOTION_TRADES:
+        return False, f"requires at least {MIN_PROMOTION_TRADES} completed trades"
     if float(stats.get("total_return_pct", 0)) <= 0:
         return False, "candidate is not profitable after costs"
     if current_stats is not None and float(stats.get("total_return_pct", 0)) <= float(current_stats.get("total_return_pct", 0)):
@@ -400,7 +406,7 @@ def run_main() -> int:
         current_stats = evaluate(aggregate(base, active_interval), active_params)["stats"]
     promotion_candidate = winner
     promoted = None
-    promotion_allowed, promotion_reason = promotion_gate(promotion_candidate, current_stats)
+    promotion_allowed, promotion_reason = promotion_gate(promotion_candidate, current_stats, completed_sessions)
     if promotion_candidate is not None:
         promotion_candidate["best"]["run_id"] = run_dir.name
         if promotion_allowed and AUTO_PROMOTION_ENABLED:

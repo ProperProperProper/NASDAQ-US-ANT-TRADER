@@ -44,17 +44,17 @@ def call_tool(name: str, arguments: dict) -> dict:
         return result(json.dumps(status), status)
     if name == "gateway_chat":
         prompt = str(arguments.get("prompt", "")).strip()
-        provider = str(arguments.get("provider", "nvidia"))
+        provider = str(arguments.get("provider", "local"))
         model = str(arguments.get("model", "auto"))
         if not prompt:
             raise ValueError("prompt is required")
         if provider not in PROVIDERS:
             raise ValueError(f"provider must be one of {sorted(PROVIDERS)}")
-        requested_max_tokens = min(max(int(arguments.get("max_tokens", 512)), 1), 4096)
+        requested_max_tokens = min(max(int(arguments.get("max_tokens", 128)), 1), 4096)
         # The bundled MLX server accepts at most 512 output tokens. Keep the
         # MCP contract aligned with that backend; the Rust gateway also clamps
         # at its final upstream boundary for non-MCP clients.
-        max_tokens = min(requested_max_tokens, 512) if provider == "local" else requested_max_tokens
+        max_tokens = min(requested_max_tokens, 128) if provider == "local" else requested_max_tokens
         payload = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
@@ -69,13 +69,13 @@ def call_tool(name: str, arguments: dict) -> dict:
         # trace that consumes the output budget. NVIDIA-compatible endpoints
         # support this template hint; providers that ignore it remain safe
         # because the client still parses defensively and can fall back to MLX.
-        payload["chat_template_kwargs"] = {"enable_thinking": False}
+        payload["chat_template_kwargs"] = {"reasoning_effort": "low"}
         response = http_json("/v1/chat/completions", payload)
         message = response.get("choices", [{}])[0].get("message", {})
         text = message.get("content") or message.get("reasoning_content") or json.dumps(response)
         return result(text, {"text": text, "routing": response.get("_multi_model_gateway", {}), "model": response.get("model")})
     if name == "gateway_router_sample":
-        return result(json.dumps({"prompt": arguments.get("prompt", ""), "provider": arguments.get("provider", "nvidia"), "source": "mcp-sample"}))
+        return result(json.dumps({"prompt": arguments.get("prompt", ""), "provider": arguments.get("provider", "local"), "source": "mcp-sample"}))
     raise ValueError(f"unknown tool: {name}")
 
 
@@ -89,7 +89,7 @@ def handle(request: dict) -> dict | None:
     if method == "tools/list":
         tools = [
             {"name": "gateway_health", "description": "Inspect the Multi-Model AI Gateway, MLX, Apple, and NVIDIA status.", "inputSchema": {"type": "object", "properties": {}}},
-            {"name": "gateway_chat", "description": "Chat through Multi-Model AI Gateway. NVIDIA is constrained to the verified free model allowlist; explicit local MLX requests are capped at 512 output tokens.", "inputSchema": {"type": "object", "properties": {"prompt": {"type": "string"}, "provider": {"type": "string", "enum": sorted(PROVIDERS), "default": "nvidia"}, "model": {"type": "string", "description": "Optional verified model id; use auto for gateway routing."}, "max_tokens": {"type": "integer", "minimum": 1, "maximum": 4096}}, "required": ["prompt"]}},
+            {"name": "gateway_chat", "description": "Chat through Multi-Model AI Gateway. Local GPT-OSS is the default and is capped at 128 output tokens for bounded Mac resource usage.", "inputSchema": {"type": "object", "properties": {"prompt": {"type": "string"}, "provider": {"type": "string", "enum": sorted(PROVIDERS), "default": "local"}, "model": {"type": "string", "description": "Optional verified model id; use auto for gateway routing."}, "max_tokens": {"type": "integer", "minimum": 1, "maximum": 4096}}, "required": ["prompt"]}},
             {"name": "gateway_router_sample", "description": "Create a reviewable routing-example record; it does not train or deploy anything.", "inputSchema": {"type": "object", "properties": {"prompt": {"type": "string"}, "provider": {"type": "string", "enum": sorted(PROVIDERS)}}}},
         ]
         return {"jsonrpc": "2.0", "id": request_id, "result": {"tools": tools}}
