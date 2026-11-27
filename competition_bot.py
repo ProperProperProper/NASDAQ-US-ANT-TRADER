@@ -9,7 +9,7 @@ Strategy:
   - 45 completed bars for the causal price-grid signal
   - long-only, one position per symbol
   - paper-only risk and execution controls
-  - 95% of available cash per entry
+  - 95% portfolio allocation divided equally across configured symbols
 
 Moomoo OpenD must be running on 127.0.0.1:11111 and logged in. This script
 does not contain credentials or attempt to unlock a live account.
@@ -45,9 +45,9 @@ from moomoo import (
 from quant_storage import save_candles, save_execution_event
 from minute_bars import MINUTE_INTERVALS, aggregate_us_session
 from quant_api import audit_api, risk_api, strategy_api
-from strategy_57pct import BASELINE
+from strategy_57pct import BASELINE, validate_strategy_params
 from trading_config import active_symbols, normalize_symbol, promotion_path, strategy_path
-from us_market_calendar import session_close, session_exit_time
+from us_market_calendar import session_close, session_exit_time, session_phase
 
 
 ACTIVE_SYMBOLS = active_symbols()
@@ -154,7 +154,7 @@ class CompetitionBot:
                     and interval in BAR_INTERVAL_TYPES
                     and payload.get("mode") == "SIMULATE"
                     and isinstance(payload.get("params"), dict)):
-                return interval, {**BASELINE, **payload["params"]}
+                return interval, validate_strategy_params(payload["params"])
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             pass
         return self.bar_intervals[symbol], dict(BASELINE)
@@ -267,6 +267,12 @@ class CompetitionBot:
         exit_at = session_exit_time(now.date())
         close_at = session_close(now.date())
         return bool(exit_at and close_at and exit_at <= now.time() < close_at)
+
+    @staticmethod
+    def entry_window_open() -> bool:
+        """Allow entries only during RTH and before the forced-exit window."""
+        now = datetime.now(ET)
+        return session_phase(now.date(), now.time()) == "RTH" and not CompetitionBot.session_exit_due()
 
     def session_reentry_blocked(self, symbol: str) -> bool:
         """Prevent a fresh entry after this session's mandatory exit."""
@@ -531,18 +537,22 @@ class CompetitionBot:
                     continue
 
                 if signal_data["long_signal"] and signal_data["entry_allowed"]:
-                    open_positions = self.open_position_count()
-                    if open_positions >= MAX_OPEN_POSITIONS:
-                        logging.info("entry blocked symbol=%s reason=MAX_OPEN_POSITIONS open_positions=%d limit=%d", symbol, open_positions, MAX_OPEN_POSITIONS)
-                        audit_api.event("ENTRY_BLOCKED", symbol, {"reason": "MAX_OPEN_POSITIONS", "open_positions": open_positions, "limit": MAX_OPEN_POSITIONS, "price": price, "signal": signal_data, "paper": True})
+                    if not self.entry_window_open():
+                        logging.info("entry blocked symbol=%s reason=OUTSIDE_ENTRY_WINDOW", symbol)
+                        audit_api.event("ENTRY_BLOCKED", symbol, {"reason": "OUTSIDE_ENTRY_WINDOW", "price": price, "signal": signal_data, "paper": True})
                     else:
-                        cash = self.account_funds()
-                        decision = risk_api.entry_decision(cash, price, POSITION_FRACTION)
-                        audit_api.event("RISK_DECISION", symbol, {**decision.__dict__, "cash": cash, "price": price, "open_positions": open_positions, "max_open_positions": MAX_OPEN_POSITIONS, "signal": signal_data})
-                        if decision.allowed:
-                            self.submit(symbol, TrdSide.BUY, decision.quantity, "ENTRY")
-                            self.state["pending"][symbol] = "BUY"
-                            self.peak_prices[symbol] = price
+                        open_positions = self.open_position_count()
+                        if open_positions >= MAX_OPEN_POSITIONS:
+                            logging.info("entry blocked symbol=%s reason=MAX_OPEN_POSITIONS open_positions=%d limit=%d", symbol, open_positions, MAX_OPEN_POSITIONS)
+                            audit_api.event("ENTRY_BLOCKED", symbol, {"reason": "MAX_OPEN_POSITIONS", "open_positions": open_positions, "limit": MAX_OPEN_POSITIONS, "price": price, "signal": signal_data, "paper": True})
+                        else:
+                            cash = self.account_funds()
+                            decision = risk_api.entry_decision(cash, price, POSITION_FRACTION)
+                            audit_api.event("RISK_DECISION", symbol, {**decision.__dict__, "cash": cash, "price": price, "open_positions": open_positions, "max_open_positions": MAX_OPEN_POSITIONS, "signal": signal_data})
+                            if decision.allowed:
+                                self.submit(symbol, TrdSide.BUY, decision.quantity, "ENTRY")
+                                self.state["pending"][symbol] = "BUY"
+                                self.peak_prices[symbol] = price
                     self.state["last_bar"][symbol] = signal_data["bar"]
                     self.state["last_source_bar"][symbol] = source_bar
                     self._save_state()

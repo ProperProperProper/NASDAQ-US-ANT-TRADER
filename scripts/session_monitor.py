@@ -88,15 +88,20 @@ def check() -> dict:
 
 
 def main() -> int:
+    def is_fault(value: dict) -> bool:
+        return bool(
+            value["environment"] != "SIMULATE"
+            or value["bot_count"] != 1
+            or value["research_count"] > 1
+            or set(value["quotes"]) != set(value["symbols"])
+            or any(value["cache_end"].get(symbol) in {"None", ""} for symbol in value["symbols"])
+            or any(float(item.get("qty", 0)) < 0 for item in value["positions"])
+        )
+
     if "--once" in sys.argv:
         try:
             value = check()
-            fault = (
-                value["environment"] != "SIMULATE"
-                or value["bot_count"] != 1
-                or value["research_count"] > 1
-                or any(float(item.get("qty", 0)) < 0 for item in value["positions"])
-            )
+            fault = is_fault(value)
             value["state"] = "FAULT" if fault else "HEALTHY"
             print(json.dumps(value, sort_keys=True), flush=True)
             return 0 if not fault else 1
@@ -111,12 +116,7 @@ def main() -> int:
             return 0
         try:
             value = check()
-            fault = (
-                value["environment"] != "SIMULATE"
-                or value["bot_count"] != 1
-                or value["research_count"] > 1
-                or any(float(item.get("qty", 0)) < 0 for item in value["positions"])
-            )
+            fault = is_fault(value)
             value["state"] = "FAULT" if fault else "HEALTHY"
             compact = json.dumps(value, sort_keys=True, separators=(",", ":"))
             if compact != last or now.minute % 5 == 0:

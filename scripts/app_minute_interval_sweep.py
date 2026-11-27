@@ -53,7 +53,7 @@ def _evaluate_params(params: dict) -> dict:
 from quant_storage import load_candles
 from minute_bars import aggregate_us_session
 from market_data import fetch_moomoo_candles
-from strategy_57pct import ALLOCATION, BASELINE, run, stats
+from strategy_57pct import ALLOCATION, BASELINE, run, stats, validate_strategy_params
 
 
 def ensure_one_minute_cache(symbol: str, start: str, end: str, refresh: bool) -> None:
@@ -256,7 +256,7 @@ def promote_winner(winner: dict) -> dict:
     interval = int(winner["interval"].removesuffix("m"))
     if interval not in range(1, MAX_INTERVAL_MINUTES + 1):
         raise ValueError("promotion interval must be between 1 and 10 minutes")
-    params = dict(winner["params"])
+    params = validate_strategy_params(winner["params"])
     payload = {
         "symbol": ACTIVE_SYMBOL, "interval": interval, "params": params,
         "run_id": winner["run_id"], "updated_at": pd.Timestamp.now(tz="UTC").isoformat(),

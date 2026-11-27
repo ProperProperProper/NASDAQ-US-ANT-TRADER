@@ -8,10 +8,11 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from strategy_57pct import add_features, run, strategy_signal
+from strategy_57pct import Trade, add_features, run, stats, strategy_signal, validate_strategy_params
 from minute_bars import MINUTE_INTERVALS, aggregate_us_session
 from scripts.app_minute_interval_sweep import parse_intervals, promotion_gate, promote_winner
 from scripts.research_scheduler import session_phase
+from us_market_calendar import early_close_dates, session_close
 from competition_bot import CompetitionBot, MAX_OPEN_POSITIONS, count_open_positions
 from trading_config import active_symbol, active_symbols, normalize_symbol, strategy_path
 from scripts.multi_symbol_backtest import parse_symbols as parse_backtest_symbols
@@ -21,6 +22,27 @@ ET = ZoneInfo("America/New_York")
 
 
 class GridStrategyTests(unittest.TestCase):
+    def test_2026_exchange_early_closes_are_supported(self):
+        self.assertEqual(session_close(datetime(2026, 7, 2).date()).isoformat(), "13:00:00")
+        self.assertEqual(session_close(datetime(2026, 11, 27).date()).isoformat(), "13:00:00")
+        self.assertIn(datetime(2026, 12, 24).date(), early_close_dates(2026))
+
+    def test_strategy_parameters_fail_closed(self):
+        with self.assertRaises(ValueError):
+            validate_strategy_params({"entry_mode": "invented_mode"})
+        with self.assertRaises(ValueError):
+            validate_strategy_params({"stop_loss_pct": float("nan")})
+        with self.assertRaises(ValueError):
+            validate_strategy_params({"grid_lookback": 1000})
+
+    def test_stats_use_portfolio_equity_not_compounded_position_returns(self):
+        trade = Trade("2026-01-01", "2026-01-01", 100.0, 950, "2026-01-02", 110.0,
+                      9500.0, 0.0, 9500.0, 10.0, "TEST")
+        equity = pd.DataFrame({"equity": [100000.0, 109500.0]}, index=pd.to_datetime(["2026-01-01", "2026-01-02"]))
+        result = stats([trade], {"equity": equity}, 100000.0)
+        self.assertEqual(result["ending_equity"], 109500.0)
+        self.assertEqual(result["total_return_pct"], 9.5)
+
     def test_active_symbol_configuration_and_paths_are_isolated(self):
         self.assertEqual(active_symbol(), "US.MRNA")
         self.assertEqual(active_symbols(), ("US.MRNA", "US.ANT", "US.NVDA", "US.MU", "US.SNDK", "US.OMH", "US.APP"))
@@ -75,6 +97,14 @@ class GridStrategyTests(unittest.TestCase):
         bot.peak_prices = {"US.AAPL": 100.0}
         trailing = {"take_profit_pct": 0.0, "stop_loss_pct": 0.0, "trailing_activation_pct": 0.05, "trailing_stop_pct": 0.01}
         self.assertEqual(bot.risk_exit_reason("US.AAPL", 98.0, 100, 90.0, trailing), "TRAILING_STOP")
+
+    def test_entries_are_blocked_outside_rth_and_exit_window(self):
+        with patch("competition_bot.session_phase", return_value="PREMARKET"):
+            self.assertFalse(CompetitionBot.entry_window_open())
+        with patch("competition_bot.session_phase", return_value="RTH"), patch.object(CompetitionBot, "session_exit_due", return_value=False):
+            self.assertTrue(CompetitionBot.entry_window_open())
+        with patch("competition_bot.session_phase", return_value="RTH"), patch.object(CompetitionBot, "session_exit_due", return_value=True):
+            self.assertFalse(CompetitionBot.entry_window_open())
 
     def test_session_exit_persists_no_reentry_lock(self):
         bot = object.__new__(CompetitionBot)

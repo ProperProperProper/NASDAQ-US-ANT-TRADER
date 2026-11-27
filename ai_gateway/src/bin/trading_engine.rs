@@ -118,7 +118,11 @@ fn active_symbols() -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(Path::new(ROOT).join("trading_system.json"))?)?;
     let symbols = value.get("active_symbols").and_then(|item| item.as_array()).ok_or("active_symbols is required")?
         .iter().filter_map(|item| item.as_str()).map(str::to_string).collect::<Vec<_>>();
-    if symbols.is_empty() || symbols.iter().any(|symbol| !symbol.starts_with("US.")) { return Err("active_symbols must contain US symbols".into()); }
+    let unique = symbols.iter().collect::<std::collections::HashSet<_>>();
+    if symbols.is_empty() || symbols.len() > 50 || unique.len() != symbols.len()
+        || symbols.iter().any(|symbol| !symbol.starts_with("US.") || symbol.len() < 4 || symbol.len() > 18) {
+        return Err("active_symbols must contain 1–50 unique US symbols".into());
+    }
     Ok(symbols)
 }
 
@@ -168,11 +172,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for worker in &mut workers { worker.tick(&account); }
         match listener.accept() {
             Ok((mut stream, _)) => {
-                let mut buffer = [0u8; 64];
+                let mut buffer = [0u8; 4096];
                 let size = stream.read(&mut buffer).unwrap_or(0);
                 let command = std::str::from_utf8(&buffer[..size]).unwrap_or("").trim();
                 let answer = match command {
-                    "status" => format!("{}", workers.iter().map(|w| format!("{}={} pid={}", w.name, if w.enabled { "enabled" } else { "stopped" }, w.child.as_ref().map_or(0, Child::id))).collect::<Vec<_>>().join("\n")),
+                    "status" => workers.iter().map(|w| format!("{}={} pid={}", w.name, if w.enabled { "enabled" } else { "stopped" }, w.child.as_ref().map_or(0, Child::id))).collect::<Vec<_>>().join("\n"),
                     "bot-stop" => { workers[0].enabled = false; let _ = std::fs::write(BOT_PAUSED, b"paused\n"); workers[0].stop(); "paper bot stopped".into() },
                     "bot-start" => { let _ = std::fs::remove_file(BOT_PAUSED); workers[0].enabled = true; workers[0].failures = 0; workers[0].next_start = Instant::now(); "paper bot start requested".into() },
                     "bot-restart" if workers[0].enabled => { workers[0].stop(); workers[0].failures = 0; workers[0].next_start = Instant::now(); "paper bot restart requested".into() },

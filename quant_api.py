@@ -12,7 +12,7 @@ from typing import Any
 import pandas as pd
 
 from quant_storage import load_candles, save_execution_event
-from strategy_57pct import BASELINE, strategy_signal, walk_forward_optimize, walk_forward_replay, stats
+from strategy_57pct import BASELINE, strategy_signal, validate_strategy_params, walk_forward_optimize, walk_forward_replay, stats
 from trading_config import active_symbols, normalize_symbol, strategy_path
 
 
@@ -91,7 +91,7 @@ def write_live_strategy(symbol: str, interval: int, params: dict[str, Any], run_
     payload = {
         "symbol": symbol,
         "interval": int(interval),
-        "params": dict(params),
+        "params": validate_strategy_params(params),
         "run_id": run_id,
         "updated_at": pd.Timestamp.now(tz="UTC").isoformat(),
         "mode": "SIMULATE",

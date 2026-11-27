@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import signal
 import subprocess
 import sys
 import time
@@ -15,8 +17,26 @@ sys.path.insert(0, str(ROOT))
 
 from trading_config import active_symbols
 
+CURRENT_PROCESS: subprocess.Popen[str] | None = None
+
+
+def stop_pipeline(signum: int, _frame: object) -> None:
+    """Stop the active child process group so GUI cancellation leaves no workers."""
+    process = CURRENT_PROCESS
+    if process is not None and process.poll() is None:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+            process.wait(timeout=5)
+        except (ProcessLookupError, subprocess.TimeoutExpired):
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    raise SystemExit(128 + signum)
+
 
 def stream(command: list[str], stage: str, symbol: str | None = None) -> int:
+    global CURRENT_PROCESS
     print(json.dumps({"pipeline_stage": stage, "symbol": symbol, "state": "STARTED"}), flush=True)
     process = subprocess.Popen(
         command,
@@ -25,19 +45,27 @@ def stream(command: list[str], stage: str, symbol: str | None = None) -> int:
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
+        start_new_session=True,
     )
+    CURRENT_PROCESS = process
     assert process.stdout is not None
     for line in process.stdout:
         print(line, end="", flush=True)
-    return process.wait()
+    code = process.wait()
+    CURRENT_PROCESS = None
+    return code
 
 
 def main() -> int:
+    signal.signal(signal.SIGINT, stop_pipeline)
+    signal.signal(signal.SIGTERM, stop_pipeline)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--symbols", default=",".join(active_symbols()))
     parser.add_argument("--total-candidates", type=int, default=100_000)
     parser.add_argument("--workers", type=int, default=4, choices=range(1, 5))
     args = parser.parse_args()
+    if args.total_candidates < 10:
+        parser.error("--total-candidates must be at least 10 for the 1–10 minute sweep")
     requested = tuple(item.strip().upper() for item in args.symbols.split(",") if item.strip())
     if requested != active_symbols():
         parser.error(f"symbols must exactly match configured portfolio {active_symbols()}")

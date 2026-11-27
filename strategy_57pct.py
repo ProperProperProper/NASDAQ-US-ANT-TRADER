@@ -23,6 +23,34 @@ BASELINE = {
 }
 GRID_BASELINE = BASELINE
 ALLOCATION = 0.95
+ENTRY_MODES = {"any_grid_cross", "top_breakout", "upper_half_cross", "lower_half_cross"}
+EXIT_MODES = {"any_grid_cross_down", "top_breakdown", "bottom_breakdown", "lower_half_breakdown"}
+
+
+def validate_strategy_params(params: dict | None) -> dict:
+    """Return a complete, finite, bounded strategy configuration or fail closed."""
+    if params is not None and not isinstance(params, dict):
+        raise ValueError("strategy params must be an object")
+    merged = {**BASELINE, **(params or {})}
+    try:
+        merged["grid_lookback"] = int(merged["grid_lookback"])
+        merged["grid_intervals"] = int(merged["grid_intervals"])
+        for key in ("take_profit_pct", "stop_loss_pct", "trailing_activation_pct", "trailing_stop_pct"):
+            merged[key] = float(merged[key])
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("strategy parameters must be numeric") from exc
+    if not 2 <= merged["grid_lookback"] <= 240:
+        raise ValueError("grid_lookback must be between 2 and 240")
+    if not 2 <= merged["grid_intervals"] <= 20:
+        raise ValueError("grid_intervals must be between 2 and 20")
+    if merged["entry_mode"] not in ENTRY_MODES:
+        raise ValueError(f"unsupported entry_mode: {merged['entry_mode']}")
+    if merged["exit_mode"] not in EXIT_MODES:
+        raise ValueError(f"unsupported exit_mode: {merged['exit_mode']}")
+    for key in ("take_profit_pct", "stop_loss_pct", "trailing_activation_pct", "trailing_stop_pct"):
+        if not math.isfinite(merged[key]) or not 0.0 <= merged[key] <= 1.0:
+            raise ValueError(f"{key} must be finite and between 0 and 1")
+    return merged
 
 
 @dataclass
@@ -67,6 +95,7 @@ def _validate_trades(trades) -> None:
 
 def add_features(candles: pd.DataFrame, params: dict = BASELINE) -> pd.DataFrame:
     """Create only OHLC and four causal price-grid levels."""
+    params = validate_strategy_params(params)
     x = candles.copy().sort_index()
     lookback = max(2, int(params.get("grid_lookback", 45)))
     intervals = max(2, min(20, int(params.get("grid_intervals", 4))))
@@ -202,6 +231,10 @@ def run(candles: pd.DataFrame, params: dict = BASELINE, capital: float = 100000.
         costs = commission * 2.0; net = gross - costs
         cash += position["qty"] * exit_price - costs
         trades.append(Trade(position["signal_time"].isoformat(), position["entry_time"].isoformat(), position["entry"], position["qty"], stamp.isoformat(), exit_price, gross, costs, net, net / (position["entry"] * position["qty"]) * 100.0, "END_OF_DATA"))
+        if equity_rows:
+            equity_rows[-1]["equity"] = cash
+            equity_rows[-1]["cash"] = cash
+            equity_rows[-1]["position"] = 0
     equity = pd.DataFrame(equity_rows).set_index("date") if equity_rows else pd.DataFrame(columns=["equity"])
     if not equity.empty:
         equity["drawdown"] = equity.equity / equity.equity.cummax() - 1.0
@@ -210,12 +243,14 @@ def run(candles: pd.DataFrame, params: dict = BASELINE, capital: float = 100000.
 
 def _stats(trades, equity, capital):
     returns = np.array([t.net_pnl / (t.entry_price * t.qty) for t in trades]) if trades else np.array([])
-    compounded = np.cumprod(1.0 + returns) if len(returns) else np.array([1.0])
     gains = returns[returns > 0].sum() if len(returns) else 0.0; losses = -returns[returns < 0].sum() if len(returns) else 0.0
     daily = equity["equity"].resample("1D").last().pct_change(fill_method=None).dropna() if not equity.empty else pd.Series(dtype=float)
-    return {"starting_capital": round(float(capital), 2), "ending_equity": round(float(capital * compounded[-1]), 2),
-            "total_return_pct": round(float((compounded[-1] - 1.0) * 100.0), 3),
-            "max_drawdown_pct": round(float((compounded / np.maximum.accumulate(compounded) - 1.0).min() * 100.0), 3) if len(returns) else 0.0,
+    ending_equity = float(equity["equity"].iloc[-1]) if not equity.empty else float(capital)
+    running_peak = equity["equity"].cummax().clip(lower=float(capital)) if not equity.empty else pd.Series([float(capital)])
+    drawdown = equity["equity"] / running_peak - 1.0 if not equity.empty else pd.Series([0.0])
+    return {"starting_capital": round(float(capital), 2), "ending_equity": round(ending_equity, 2),
+            "total_return_pct": round(float((ending_equity / capital - 1.0) * 100.0), 3),
+            "max_drawdown_pct": round(float(drawdown.min() * 100.0), 3),
             "trades": len(trades), "wins": int((returns > 0).sum()),
             "win_rate_pct": round(float((returns > 0).mean() * 100.0), 2) if len(returns) else 0.0,
             "profit_factor": round(float(gains / losses), 3) if losses else None,

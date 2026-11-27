@@ -26,6 +26,8 @@ def load_config() -> dict[str, Any]:
     symbols = tuple(dict.fromkeys(normalize_symbol(value) for value in configured))
     if not symbols:
         raise ValueError("active_symbols must contain at least one US symbol")
+    if len(symbols) > 50:
+        raise ValueError("active_symbols cannot contain more than 50 symbols")
     symbol = symbols[0]
     if payload.get("market") != "US" or payload.get("mode") != "SIMULATE":
         raise ValueError("trading system must remain US and SIMULATE")
@@ -85,6 +87,8 @@ def write_active_symbols(symbols: list[str]) -> dict[str, Any]:
     normalized = list(dict.fromkeys(normalize_symbol(symbol) for symbol in symbols))
     if not normalized:
         raise ValueError("at least one symbol is required")
+    if len(normalized) > 50:
+        raise ValueError("no more than 50 symbols may be configured")
     payload = load_config()
     payload["active_symbol"] = normalized[0]
     payload["active_symbols"] = normalized

@@ -50,7 +50,11 @@ def closed_dates(year: int) -> set[date]:
 
 def early_close_dates(year: int) -> set[date]:
     thanksgiving = _nth_weekday(year, 11, 3, 4)
-    return {thanksgiving + timedelta(days=1), date(year, 12, 24)} - closed_dates(year)
+    holidays = closed_dates(year)
+    independence_eve = _observed(date(year, 7, 4)) - timedelta(days=1)
+    while independence_eve.weekday() >= 5 or independence_eve in holidays:
+        independence_eve -= timedelta(days=1)
+    return {independence_eve, thanksgiving + timedelta(days=1), date(year, 12, 24)} - holidays
 
 
 def session_close(day: date) -> time | None:

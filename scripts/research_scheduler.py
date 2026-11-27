@@ -104,6 +104,11 @@ def main() -> int:
     if phase == "RTH" or fast_premarket:
         command.extend(["--intervals", active_intervals()])
     result = subprocess.run(command, cwd=ROOT, check=False)
+    if result.returncode == 75:
+        payload = {"state": "SKIPPED", "session": session, "phase": phase, "exit_code": result.returncode,
+                   "reason": "research lock busy", "finished_at": dt.datetime.now(dt.timezone.utc).isoformat()}
+        STATE.write_text(json.dumps(payload, indent=2) + "\n")
+        return 0
     payload = {"state": "COMPLETED" if result.returncode == 0 else "FAILED", "session": session, "phase": phase, "exit_code": result.returncode, "finished_at": dt.datetime.now(dt.timezone.utc).isoformat()}
     if result.returncode == 0:
         payload["last_completed_session"] = session

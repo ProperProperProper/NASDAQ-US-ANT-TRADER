@@ -3,14 +3,15 @@
   "mode": "SIMULATE",
   "params": {
     "entry_mode": "any_grid_cross",
-    "exit_mode": "any_grid_cross_down",
-    "grid_intervals": 4,
-    "grid_lookback": 45,
+    "exit_mode": "bottom_breakdown",
+    "grid_intervals": 12,
+    "grid_lookback": 67,
     "stop_loss_pct": 0.1324,
     "take_profit_pct": 0.0274,
-    "trailing_activation_pct": 0.0,
-    "trailing_stop_pct": 0.0
+    "trailing_activation_pct": 0.01,
+    "trailing_stop_pct": 0.015
   },
-  "run_id": "INITIAL-BASELINE",
-  "symbol": "US.NVDA"
+  "run_id": "US-NVDA-MINUTE-20261128-004935",
+  "symbol": "US.NVDA",
+  "updated_at": "2026-11-27T13:57:38.021152+00:00"
 }
