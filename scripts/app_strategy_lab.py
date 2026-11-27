@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""AI mutation loop for the US.ANT 10-minute paper strategy.
+"""AI mutation loop for the active symbol's 10-minute paper strategy.
 
 AI agents propose bounded grid-lookback mutations. The local deterministic
 evaluator owns all P/L, and every selected validation candidate is published
@@ -25,6 +25,8 @@ LAB_ROOT = ROOT
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(LAB_ROOT))
 sys.path.insert(0, str(LAB_ROOT / "scripts"))
+from trading_config import active_symbol, normalize_symbol, research_dir, strategy_path
+ACTIVE_SYMBOL = active_symbol()
 
 
 def load_root_module(name: str, path: Path):
@@ -68,7 +70,7 @@ class AntigravityOptimizer(MCPClient):
 
 
 def write_live_strategy(symbol: str, interval: int, params: dict, run_id: str) -> dict:
-    path = ROOT / "paper_bot_live_strategy.json"
+    path = strategy_path(symbol)
     payload = {"symbol": symbol, "interval": int(interval), "params": dict(params),
                "run_id": run_id, "updated_at": pd.Timestamp.now(tz="UTC").isoformat(),
                "mode": "SIMULATE"}
@@ -78,16 +80,16 @@ def write_live_strategy(symbol: str, interval: int, params: dict, run_id: str) -
     return payload
 
 
-def load_frame(db_path: Path) -> pd.DataFrame:
+def load_frame(db_path: Path, symbol: str) -> pd.DataFrame:
     with sqlite3.connect(db_path) as db:
         frame = pd.read_sql_query(
             """SELECT time_key, open, high, low, close, volume
-               FROM candles WHERE symbol='US.ANT' AND interval_minutes=10
+               FROM candles WHERE symbol=? AND interval_minutes=10
                ORDER BY time_key""",
-            db, parse_dates=["time_key"],
+            db, params=(symbol,), parse_dates=["time_key"],
         )
     if frame.empty:
-        raise RuntimeError("No US.ANT 10-minute candles in the Moomoo cache")
+        raise RuntimeError(f"No {symbol} 10-minute candles in the Moomoo cache")
     frame = frame.drop_duplicates("time_key").set_index("time_key").sort_index()
     frame = frame.loc[frame.index >= frame.index.max() - pd.Timedelta(days=30)]
     return frame[["open", "high", "low", "close", "volume"]].astype(float)
@@ -145,7 +147,7 @@ def parse_proposal(text: str) -> dict | None:
 
 def ask_agent(client: MCPClient | None, antigravity: AntigravityOptimizer | None, provider: str, profile: dict, parents: list[dict], role: str, local_proposals: list[dict] | None = None) -> dict | None:
     prompt = (
-        "You are an independent mutation agent for the US.ANT Moomoo paper bot. "
+        f"You are an independent mutation agent for the {ACTIVE_SYMBOL} Moomoo paper bot. "
         "The active strategy is a causal 10-minute candle-open price grid. "
         "Propose exactly one bounded JSON strategy mutation. You may change "
         "grid_lookback (integer 5-120), entry_mode (any_grid_cross, top_breakout, "
@@ -176,19 +178,25 @@ def write_status(path: Path, payload: dict) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--db", type=Path, default=ROOT / "quant_dashboard.sqlite3")
-    ap.add_argument("--run-dir", type=Path, default=LAB_ROOT / "strategy_lab_runs")
+    ap.add_argument("--symbol", default=ACTIVE_SYMBOL)
+    ap.add_argument("--run-dir", type=Path)
     ap.add_argument("--rounds", type=int, default=20)
     ap.add_argument("--agents", type=int, default=2)
     ap.add_argument("--candidates", type=int, default=100)
     ap.add_argument("--providers", default="antigravity")
     ap.add_argument("--continuous", action="store_true")
     args = ap.parse_args()
+    args.symbol = normalize_symbol(args.symbol)
+    if args.symbol != active_symbol():
+        ap.error(f"symbol must match configured active symbol {active_symbol()}")
+    if args.run_dir is None:
+        args.run_dir = research_dir(args.symbol) / "legacy-lab"
     providers = [x.strip() for x in args.providers.split(",") if x.strip()]
-    frame = load_frame(args.db)
+    frame = load_frame(args.db, args.symbol)
     train_end, validation_end = int(len(frame) * .60), int(len(frame) * .80)
     train, validation, test = frame.iloc[:train_end], frame.iloc[train_end:validation_end], frame.iloc[validation_end:]
-    profile = {"symbol": "US.ANT", "interval": "10m", "rows": len(frame), "start": str(frame.index.min()), "end": str(frame.index.max()), "train_rows": len(train), "validation_rows": len(validation), "test_rows": len(test)}
-    run_dir = args.run_dir / ("ANT-" + time.strftime("%Y%m%d-%H%M%S"))
+    profile = {"symbol": args.symbol, "interval": "10m", "rows": len(frame), "start": str(frame.index.min()), "end": str(frame.index.max()), "train_rows": len(train), "validation_rows": len(validation), "test_rows": len(test)}
+    run_dir = args.run_dir / (args.symbol.replace(".", "-") + "-" + time.strftime("%Y%m%d-%H%M%S"))
     run_dir.mkdir(parents=True, exist_ok=True)
     stop_file = run_dir / "STOP"
     status_file = args.run_dir / "app_runtime_status.json"
@@ -211,7 +219,7 @@ def main() -> int:
             if stop_file.exists():
                 break
             round_number += 1
-            write_status(status_file, {"state": "RUNNING", "symbol": "US.ANT", "interval": "10m", "round": round_number, "run_dir": str(run_dir), "profile": profile})
+            write_status(status_file, {"state": "RUNNING", "symbol": args.symbol, "interval": "10m", "round": round_number, "run_dir": str(run_dir), "profile": profile})
             with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.agents)) as pool:
                 jobs = [pool.submit(lambda seed: [evaluate(train, mutate(random.Random(seed), random.choice(parents))) for _ in range(args.candidates)], 900000 + round_number * 100 + i) for i in range(args.agents)]
                 candidates = [item for job in jobs for item in job.result()]
@@ -234,7 +242,7 @@ def main() -> int:
             validation_candidates.sort(key=lambda item: item["stats"]["selection_score"], reverse=True)
             selected = validation_candidates[0]
             final = evaluate(test, selected["params"])
-            promoted = write_live_strategy("US.ANT", 10, selected["params"], f"ANT-{run_dir.name}-r{round_number:03d}")
+            promoted = write_live_strategy(args.symbol, 10, selected["params"], f"{args.symbol.replace('.', '-')}-{run_dir.name}-r{round_number:03d}")
             result = {"round": round_number, "profile": profile, "train_best": candidates[0], "selected_validation": selected, "final_test": final, "promoted": promoted, "agent_mutation": bool(client or antigravity), "proposal_provider": "local" if client else None, "configuration_provider": "local" if antigravity else None, "local_proposals": local_proposals}
             (run_dir / f"round-{round_number:03d}.json").write_text(json.dumps(result, indent=2, default=str) + "\n")
             write_status(status_file, {"state": "RUNNING", **result, "run_dir": str(run_dir)})

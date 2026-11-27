@@ -5,14 +5,12 @@ import pandas as pd
 from moomoo import AuType, KLType, KL_FIELD, OpenQuoteContext, RET_OK
 
 from quant_storage import save_candles
-
-ACTIVE_SYMBOL = "US.ANT"
+from trading_config import normalize_symbol
 
 
 def fetch_moomoo_candles(symbol: str, start: str, end: str) -> int:
     """Fetch and cache only 1-minute candles from the local OpenD service."""
-    if str(symbol).upper().strip() != ACTIVE_SYMBOL:
-        raise ValueError(f"only {ACTIVE_SYMBOL} market data is permitted")
+    symbol = normalize_symbol(symbol)
     quote = OpenQuoteContext(host="127.0.0.1", port=11111)
     frames = []
     page_key = None

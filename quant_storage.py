@@ -11,10 +11,10 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from trading_config import normalize_symbol
 
 
 DB_PATH = Path(__file__).with_name("quant_dashboard.sqlite3")
-ACTIVE_SYMBOL = "US.ANT"
 
 
 def _json(value: Any) -> str:
@@ -81,9 +81,7 @@ def connect(path: Path = DB_PATH) -> sqlite3.Connection:
 
 
 def save_candles(frame: pd.DataFrame, symbol: str, interval_minutes: int, source: str = "moomoo_opend") -> int:
-    normalized_symbol = str(symbol).upper().strip()
-    if normalized_symbol != ACTIVE_SYMBOL:
-        raise ValueError(f"only {ACTIVE_SYMBOL} candle storage is permitted; got {symbol!r}")
+    normalized_symbol = normalize_symbol(symbol)
     db = connect()
     count = 0
     try:

@@ -28,7 +28,7 @@ MLX, NVIDIA, and Apple providers through provider-neutral interfaces.
 
 ## Prompt and context controls
 
-- Strategy prompts identify `US.ANT`, the allowed parameter keys, numeric bounds,
+- Strategy prompts identify the configured active symbol, the allowed parameter keys, numeric bounds,
   and the required JSON-only response.
 - Free-text model output is parsed defensively and reduced to a strict allowlist
   of strategy fields and enum values.
@@ -56,7 +56,7 @@ MLX, NVIDIA, and Apple providers through provider-neutral interfaces.
 - Rust tests cover security telemetry validation and denial of trading actions;
   Rust formatting and release tests run before release commits.
 - Research records parameters, costs, return, drawdown, trade count, and the
-  complete run artifact. Results with fewer than two completed US.ANT sessions,
+  complete run artifact. Results with fewer than two completed same-symbol sessions,
   fewer than two trades, or weak evidence are held and cannot be promoted.
 - A promotion result is research evidence, not a performance guarantee. The
   strategy result must remain traceable to its data window and run ID.
@@ -74,5 +74,5 @@ MLX, NVIDIA, and Apple providers through provider-neutral interfaces.
 ## Operational rule
 
 If an AI provider is unavailable, malformed, untrusted, or outside its allowed
-scope, the deterministic US.ANT paper-trading code continues with its validated
+scope, the deterministic active-symbol paper-trading code continues with its validated
 baseline or holds the research result. AI output is never an execution authority.

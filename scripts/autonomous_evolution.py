@@ -18,8 +18,11 @@ import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from trading_config import active_symbol, research_dir, strategy_path
+SYMBOL = active_symbol()
 MCP = ROOT / "ai_gateway" / "ai" / "mcp_server.py"
-RUNS = ROOT / "strategy_lab_runs"
+RUNS = research_dir(SYMBOL) / "evolution"
 # The AI mutation worker may change strategy implementation only. Promotion
 # policy, execution, account, and scheduler files are user-owned controls.
 ALLOWED = re.compile(r"^strategy_57pct\.py$")
@@ -83,9 +86,9 @@ def tests(worktree: Path) -> None:
         result = subprocess.run(command, cwd=worktree, text=True, capture_output=True, check=False)
         if result.returncode:
             raise RuntimeError(f"test failed: {' '.join(command)}\n{result.stdout}\n{result.stderr}")
-    config = json.loads((worktree / "paper_bot_live_strategy.json").read_text())
+    config = json.loads(strategy_path(SYMBOL).read_text())
     if config.get("mode") != "SIMULATE":
-        raise RuntimeError("paper_bot_live_strategy.json is not SIMULATE")
+        raise RuntimeError("active symbol strategy is not SIMULATE")
 
 
 def profitability_gate(worktree: Path) -> dict:
@@ -106,7 +109,7 @@ baseline = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(baseline)
 config = json.loads(Path(sys.argv[3]).read_text())
 with sqlite3.connect(sys.argv[1]) as db:
-    frame = pd.read_sql_query("select time_key,open,high,low,close,volume from candles where symbol='US.ANT' and interval_minutes=1 order by time_key", db, parse_dates=["time_key"])
+    frame = pd.read_sql_query("select time_key,open,high,low,close,volume from candles where symbol=? and interval_minutes=1 order by time_key", db, params=(sys.argv[4],), parse_dates=["time_key"])
 frame = frame.set_index("time_key").sort_index()
 days = sorted(frame.index.normalize().unique())[-5:]
 frame = frame[frame.index.normalize().isin(days)]
@@ -135,7 +138,7 @@ if new_best < old_best:
 """
     result = subprocess.run(
         [sys.executable, "-c", script, str(ROOT / "quant_dashboard.sqlite3"),
-         str(baseline_path), str(worktree / "paper_bot_live_strategy.json")],
+         str(baseline_path), str(strategy_path(SYMBOL)), SYMBOL],
         cwd=worktree, text=True, capture_output=True, check=False,
     )
     if result.returncode:
@@ -144,9 +147,8 @@ if new_best < old_best:
 
 
 def main() -> int:
-    runtime_state = " M paper_bot_live_strategy.json"
     dirty = [line for line in git("status", "--porcelain").splitlines()
-             if not line.startswith("?? archive/") and line != runtime_state]
+             if not line.startswith("?? archive/")]
     if dirty:
         print(json.dumps({"state": "SKIPPED", "reason": "main worktree is not clean"}))
         return 0
@@ -155,7 +157,7 @@ def main() -> int:
     run_dir = RUNS / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     current = (ROOT / "strategy_57pct.py").read_text()
-    prompt = f"""You are the strategy mutation worker for a paper-only US.ANT system.
+    prompt = f"""You are the strategy mutation worker for a paper-only {SYMBOL} system.
 The research contract is fixed: fetch/cache only 1-minute candles, locally aggregate
 and test every interval from 1m through 10m, and use only the latest five completed
 US sessions. The deterministic evaluator owns PnL; the AI must not invent results.
@@ -172,7 +174,7 @@ Current strategy source:
     try:
         proposed = extract_patch(ask(prompt))
         (run_dir / "proposal.diff").write_text(proposed)
-        review = ask(f"""Review this proposed strategy-code diff for a paper-only US.ANT bot.
+        review = ask(f"""Review this proposed strategy-code diff for a paper-only {SYMBOL} bot.
 The research contract is 1-minute source candles, local aggregation across every 1m
 through 10m interval, and exactly the latest five completed sessions. Check correctness,
 regression risk, look-ahead bias, unsafe execution changes, and whether it can improve

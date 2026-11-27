@@ -13,6 +13,7 @@ import pandas as pd
 
 from quant_storage import load_candles, save_execution_event
 from strategy_57pct import BASELINE, strategy_signal, walk_forward_optimize, walk_forward_replay, stats
+from trading_config import active_symbol, normalize_symbol, strategy_path
 
 
 class StrategyAPI:
@@ -79,13 +80,14 @@ audit_api = AuditAPI()
 data_api = DataAPI()
 
 
-LIVE_STRATEGY_PATH = Path(__file__).with_name("paper_bot_live_strategy.json")
+LIVE_STRATEGY_PATH = strategy_path()
 
 
 def write_live_strategy(symbol: str, interval: int, params: dict[str, Any], run_id: str | None = None) -> dict[str, Any]:
-    """Publish the latest ANT research parameters for the SIMULATE bot."""
-    if symbol != "US.ANT" or int(interval) not in range(1, 11):
-        raise ValueError("paper strategy requires US.ANT and a 1–10 minute interval")
+    """Publish a strategy only for the configured SIMULATE paper symbol."""
+    symbol = normalize_symbol(symbol)
+    if symbol != active_symbol() or int(interval) not in range(1, 11):
+        raise ValueError("paper strategy requires the active symbol and a 1–10 minute interval")
     payload = {
         "symbol": symbol,
         "interval": int(interval),
@@ -94,9 +96,10 @@ def write_live_strategy(symbol: str, interval: int, params: dict[str, Any], run_
         "updated_at": pd.Timestamp.now(tz="UTC").isoformat(),
         "mode": "SIMULATE",
     }
-    temporary = LIVE_STRATEGY_PATH.with_name(LIVE_STRATEGY_PATH.name + ".tmp")
+    path = strategy_path(symbol)
+    temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    temporary.replace(LIVE_STRATEGY_PATH)
+    temporary.replace(path)
     return payload
 
 

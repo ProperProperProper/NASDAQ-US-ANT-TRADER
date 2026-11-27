@@ -14,17 +14,17 @@
 
 ## Persistent services
 
-The US.ANT installation uses one Rust engine launch agent:
+The paper-trading installation uses one Rust engine launch agent:
 
-- `com.local.us-ant-engine`: `~/Library/LaunchAgents/com.local.us-ant-engine.plist`
+- `com.local.trading-engine`: `~/Library/LaunchAgents/com.local.trading-engine.plist`
 - the engine supervises the paper bot, research scheduler, gateway, and MLX Sentinel
-- the local plist supplies the verified `US_ANT_PAPER_ACCOUNT_ID`
+- the local plist supplies the verified `PAPER_ACCOUNT_ID`
 - logs: `../logs/trading-engine.err` and each worker's local log
 
 Check or restart them:
 
 ```sh
-launchctl print gui/$(id -u)/com.local.us-ant-engine
+launchctl print gui/$(id -u)/com.local.trading-engine
 ./target/release/trading_engine status
 ```
 

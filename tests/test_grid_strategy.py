@@ -13,12 +13,20 @@ from minute_bars import MINUTE_INTERVALS, aggregate_us_session
 from scripts.app_minute_interval_sweep import parse_intervals, promotion_gate, promote_winner
 from scripts.research_scheduler import session_phase
 from competition_bot import CompetitionBot, MAX_OPEN_POSITIONS, count_open_positions
+from trading_config import active_symbol, normalize_symbol, strategy_path
 
 
 ET = ZoneInfo("America/New_York")
 
 
 class GridStrategyTests(unittest.TestCase):
+    def test_active_symbol_configuration_and_paths_are_isolated(self):
+        self.assertEqual(active_symbol(), "US.ANT")
+        self.assertEqual(normalize_symbol("aapl"), "US.AAPL")
+        self.assertNotEqual(strategy_path("US.ANT"), strategy_path("US.AAPL"))
+        with self.assertRaises(ValueError):
+            normalize_symbol("AU.BHP")
+
     def candles(self):
         index = pd.date_range("2026-01-01", periods=12, freq="10min")
         rows = []

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Research US.ANT on synthetic 1m..10m candles built from a 1m Moomoo cache.
+"""Research the active symbol on synthetic 1m..10m candles from a 1m cache.
 
 The sweep tests the full 5-session window, publishes the highest-return tested
 interval and parameters without interrupting the configured SIMULATE paper bot.
@@ -21,7 +21,10 @@ from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
-RANDOM_HISTORY = ROOT / ".randomized_param_history.json"
+sys.path.insert(0, str(ROOT))
+from trading_config import active_symbol, normalize_symbol, promotion_path, research_dir, strategy_path
+ACTIVE_SYMBOL = active_symbol()
+RANDOM_HISTORY = research_dir(ACTIVE_SYMBOL) / "randomized_param_history.json"
 MAX_RESEARCH_SESSIONS = 5
 MAX_INTERVAL_MINUTES = 10
 MAX_KNOWN_SUCCESSFUL_PER_INTERVAL = 5
@@ -29,13 +32,13 @@ MAX_KNOWN_SUCCESSFUL_PER_INTERVAL = 5
 # the paper bot remain responsive while sweeps run asynchronously.
 # Use four isolated evaluator workers so research finishes promptly while
 # remaining well below the machine-wide resource ceiling on this 10-core Mac.
-RESEARCH_WORKERS = max(1, min(4, int(os.environ.get("US_ANT_RESEARCH_WORKERS", "4"))))
+RESEARCH_WORKERS = max(1, min(4, int(os.environ.get("RESEARCH_WORKERS", "4"))))
 # Eligible candidates are promoted automatically through the paper bot's
 # broker-verified flat-position gate; never publish directly from research.
 AUTO_PROMOTION_ENABLED = True
 MIN_PROMOTION_SESSIONS = 2
 MIN_PROMOTION_TRADES = 2
-PENDING_PROMOTION_PATH = ROOT / "pending_paper_strategy_promotion.json"
+PENDING_PROMOTION_PATH = promotion_path(ACTIVE_SYMBOL)
 _WORK_FRAME = None
 _KNOWN_SUCCESSFUL_BY_INTERVAL: dict[int, dict[str, dict]] | None = None
 
@@ -47,7 +50,6 @@ def _init_evaluator(frame: pd.DataFrame) -> None:
 
 def _evaluate_params(params: dict) -> dict:
     return evaluate(_WORK_FRAME, params)
-sys.path.insert(0, str(ROOT))
 from quant_storage import load_candles
 from minute_bars import aggregate_us_session
 from market_data import fetch_moomoo_candles
@@ -80,7 +82,7 @@ def ensure_one_minute_cache(symbol: str, start: str, end: str, refresh: bool) ->
 def load_one_minute(symbol: str) -> pd.DataFrame:
     frame = load_candles(symbol, 1, "1900-01-01", "2999-12-31")
     if frame.empty:
-        raise RuntimeError("No 1-minute US.ANT candles are cached")
+        raise RuntimeError(f"No 1-minute {symbol} candles are cached")
     frame = frame.sort_index()[["open", "high", "low", "close", "volume"]].astype(float)
     session_days = pd.Index(frame.index.normalize().unique()).sort_values()
     if len(session_days) > MAX_RESEARCH_SESSIONS:
@@ -113,7 +115,7 @@ def known_successful(interval: int) -> list[dict]:
         # successful candidates from the five newest result files rather than
         # reparsing hundreds of MB of stale, out-of-window history.
         result_files = sorted(
-            ROOT.glob("strategy_lab_runs/ANT-MINUTE-*/profitable_params.jsonl"),
+            (research_dir(ACTIVE_SYMBOL) / "runs").glob("*/profitable_params.jsonl"),
             key=lambda path: path.stat().st_mtime,
             reverse=True,
         )[:5]
@@ -133,7 +135,7 @@ def known_successful(interval: int) -> list[dict]:
                 continue
 
     found = dict(_KNOWN_SUCCESSFUL_BY_INTERVAL.get(interval, {}))
-    config_path = ROOT / "paper_bot_live_strategy.json"
+    config_path = strategy_path(ACTIVE_SYMBOL)
     if config_path.exists():
         try:
             config = json.loads(config_path.read_text())
@@ -182,7 +184,7 @@ def save_random_history(history: set[str]) -> None:
 
 def ai_candidates(interval: int) -> list[dict]:
     prompt = (
-        "Return a JSON array of up to 3 bounded parameter objects for a US.ANT "
+        f"Return a JSON array of up to 3 bounded parameter objects for {ACTIVE_SYMBOL} "
         f"{interval}-minute candle-open grid strategy. Use only grid_lookback "
         "integer 5..120, grid_intervals integer 2..20, entry_mode in any_grid_cross/top_breakout/upper_half_cross/"
         "lower_half_cross, and exit_mode in any_grid_cross_down/top_breakdown/"
@@ -256,7 +258,7 @@ def promote_winner(winner: dict) -> dict:
         raise ValueError("promotion interval must be between 1 and 10 minutes")
     params = dict(winner["params"])
     payload = {
-        "symbol": "US.ANT", "interval": interval, "params": params,
+        "symbol": ACTIVE_SYMBOL, "interval": interval, "params": params,
         "run_id": winner["run_id"], "updated_at": pd.Timestamp.now(tz="UTC").isoformat(),
         "mode": "SIMULATE",
     }
@@ -295,7 +297,7 @@ def parse_intervals(value: str | None) -> list[int]:
 
 def run_main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--symbol", default="US.ANT", choices=["US.ANT"], help="active symbol (fixed to US.ANT)")
+    ap.add_argument("--symbol", default=ACTIVE_SYMBOL, help="configured active US symbol")
     ap.add_argument("--start", default="2026-01-01")
     ap.add_argument("--end", default=pd.Timestamp.now().strftime("%Y-%m-%d"))
     ap.add_argument("--refresh-1m", action="store_true")
@@ -304,8 +306,11 @@ def run_main() -> int:
     ap.add_argument("--ai", action="store_true", help="Add bounded AI proposals from the local gateway")
     ap.add_argument("--phase", choices=["PREMARKET", "RTH", "MANUAL"], default="MANUAL", help="Research phase for scheduling and audit records")
     ap.add_argument("--intervals", default=None, help="Comma-separated intervals to test; defaults to 1..10")
-    ap.add_argument("--run-dir", type=Path, default=ROOT / "strategy_lab_runs")
+    ap.add_argument("--run-dir", type=Path, default=research_dir(ACTIVE_SYMBOL) / "runs")
     args = ap.parse_args()
+    args.symbol = normalize_symbol(args.symbol)
+    if args.symbol != active_symbol():
+        ap.error(f"symbol must match configured active symbol {active_symbol()}")
     intervals = parse_intervals(args.intervals)
     try:
         ensure_one_minute_cache(args.symbol, args.start, args.end, args.refresh_1m)
@@ -314,7 +319,7 @@ def run_main() -> int:
         return 1
     base = load_one_minute(args.symbol)
     completed_sessions = int(base.index.normalize().nunique())
-    run_dir = args.run_dir / ("ANT-MINUTE-" + time.strftime("%Y%m%d-%H%M%S"))
+    run_dir = args.run_dir / (args.symbol.replace(".", "-") + "-MINUTE-" + time.strftime("%Y%m%d-%H%M%S"))
     run_dir.mkdir(parents=True, exist_ok=True)
     if args.total_candidates is not None and args.total_candidates < len(intervals):
         raise ValueError(f"--total-candidates must be at least {len(intervals)}")
@@ -405,7 +410,7 @@ def run_main() -> int:
     active_interval = None
     active_params = None
     try:
-        active_config = json.loads((ROOT / "paper_bot_live_strategy.json").read_text())
+        active_config = json.loads(strategy_path(args.symbol).read_text())
         active_interval = int(active_config.get("interval"))
         active_params = {**BASELINE, **dict(active_config.get("params", {}))}
     except (OSError, TypeError, ValueError, json.JSONDecodeError):

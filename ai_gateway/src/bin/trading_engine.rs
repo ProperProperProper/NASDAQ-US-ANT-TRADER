@@ -1,8 +1,8 @@
-//! Single launchd-owned supervisor for the US.ANT paper and AI runtime.
+//! Single launchd-owned supervisor for the configurable paper and AI runtime.
 use std::{env, fs::OpenOptions, io::{Read, Write}, os::unix::{fs::PermissionsExt, net::UnixStream, process::CommandExt}, path::{Path, PathBuf}, process::{Child, Command, Stdio}, sync::atomic::{AtomicBool, Ordering}, thread, time::{Duration, Instant}};
 
 const ROOT: &str = "/Users/local.local/Projects/TradingSystem";
-const SOCKET: &str = "/tmp/us-ant-trading-engine.sock";
+const SOCKET: &str = "/tmp/paper-trading-engine.sock";
 const BOT_PAUSED: &str = "/Users/local.local/Projects/TradingSystem/.trading_engine_bot_paused";
 static STOP: AtomicBool = AtomicBool::new(false);
 extern "C" fn handle_signal(_: i32) { STOP.store(true, Ordering::SeqCst); }
@@ -26,7 +26,7 @@ impl Worker {
 
     fn start(&mut self, account: &str) -> std::io::Result<()> {
         let marker = match self.name {
-            "paper" => "competition_bot.py ANT --acc-id",
+            "paper" => "competition_bot.py",
             "research" => "continuous_research_scheduler.py",
             "gateway" => "multi-model-ai-gateway serve",
             "mlx" => "mlx_sentinel.server",
@@ -41,10 +41,10 @@ impl Worker {
         let stderr = stdout.try_clone()?;
         let mut command = Command::new(self.program);
         command.args(&self.args).current_dir(ROOT).stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr))
-            .env("US_ANT_PAPER_ACCOUNT_ID", account)
+            .env("PAPER_ACCOUNT_ID", account)
             .env("OMP_NUM_THREADS", "4").env("OPENBLAS_NUM_THREADS", "4")
             .env("MKL_NUM_THREADS", "4").env("VECLIB_MAXIMUM_THREADS", "4")
-            .env("US_ANT_RESEARCH_WORKERS", "4");
+            .env("RESEARCH_WORKERS", "4");
         unsafe {
             command.pre_exec(|| {
                 if setpgid(0, 0) == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
@@ -95,11 +95,18 @@ impl Worker {
 }
 
 fn account() -> Result<String, String> {
-    let value = env::var("US_ANT_PAPER_ACCOUNT_ID").map_err(|_| "US_ANT_PAPER_ACCOUNT_ID is required")?;
+    let value = env::var("PAPER_ACCOUNT_ID").map_err(|_| "PAPER_ACCOUNT_ID is required")?;
     if value.parse::<u64>().ok().filter(|id| *id > 0).is_none() {
         return Err("invalid paper account ID".into());
     }
     Ok(value)
+}
+
+fn active_symbol() -> Result<String, Box<dyn std::error::Error>> {
+    let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(Path::new(ROOT).join("trading_system.json"))?)?;
+    let symbol = value.get("active_symbol").and_then(|item| item.as_str()).ok_or("active_symbol is required")?;
+    if !symbol.starts_with("US.") { return Err("active_symbol must be a US symbol".into()); }
+    Ok(symbol.to_string())
 }
 
 fn control(command: &str) -> std::io::Result<()> {
@@ -108,22 +115,24 @@ fn control(command: &str) -> std::io::Result<()> {
     let mut answer = String::new();
     stream.read_to_string(&mut answer)?;
     println!("{}", answer.trim());
-    if answer.starts_with("unknown command") || answer.starts_with("paper bot is paused") {
+    if answer.starts_with("unknown command") || answer.starts_with("paper bot is paused") || answer.starts_with("symbol change rejected") || answer.starts_with("symbol change failed") {
         return Err(std::io::Error::other(answer));
     }
     Ok(())
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let arg = env::args().nth(1).unwrap_or_else(|| "serve".into());
-    if arg != "serve" && arg != "check" { return Ok(control(&arg)?); }
+    let arguments: Vec<String> = env::args().skip(1).collect();
+    let arg = arguments.first().cloned().unwrap_or_else(|| "serve".into());
+    if arg != "serve" && arg != "check" { return Ok(control(&arguments.join(" "))?); }
     let account = account()?;
     let required = ["competition_bot.py", "scripts/continuous_research_scheduler.py", "ops/start_ai_gateway.sh", "scripts/start_mlx_sentinel.sh"];
     for file in required { if !Path::new(ROOT).join(file).is_file() { return Err(format!("missing {file}").into()); } }
     if arg == "check" { println!("engine configuration valid for configured paper account"); return Ok(()); }
 
+    let symbol = active_symbol()?;
     let mut workers = [
-        Worker::new("paper", "/usr/bin/python3", vec!["competition_bot.py".into(), "ANT".into(), "--acc-id".into(), account.clone(), "--bar-interval".into(), "1".into(), "--live-paper".into()], "competition_bot.launchd.err"),
+        Worker::new("paper", "/usr/bin/python3", vec!["competition_bot.py".into(), symbol.clone(), "--acc-id".into(), account.clone(), "--bar-interval".into(), "1".into(), "--live-paper".into()], "competition_bot.launchd.err"),
         Worker::new("research", "/usr/bin/python3", vec!["scripts/continuous_research_scheduler.py".into()], "logs/research-scheduler.log"),
         Worker::new("gateway", "/bin/zsh", vec!["ops/start_ai_gateway.sh".into()], "logs/multi-model-ai-gateway.err"),
         Worker::new("mlx", "/bin/zsh", vec!["scripts/start_mlx_sentinel.sh".into()], "logs/mlx-sentinel.err"),
@@ -138,7 +147,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = std::os::unix::net::UnixListener::bind(&socket)?;
     std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
     listener.set_nonblocking(true)?;
-    eprintln!("US.ANT engine started; four research workers maximum");
+    eprintln!("paper engine started for {symbol}; four research workers maximum");
     while !STOP.load(Ordering::SeqCst) {
         for worker in &mut workers { worker.tick(&account); }
         match listener.accept() {
@@ -152,6 +161,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "bot-start" => { let _ = std::fs::remove_file(BOT_PAUSED); workers[0].enabled = true; workers[0].failures = 0; workers[0].next_start = Instant::now(); "paper bot start requested".into() },
                     "bot-restart" if workers[0].enabled => { workers[0].stop(); workers[0].failures = 0; workers[0].next_start = Instant::now(); "paper bot restart requested".into() },
                     "bot-restart" => "paper bot is paused".into(),
+                    value if value.starts_with("symbol-set ") => {
+                        let requested = value.trim_start_matches("symbol-set ").trim();
+                        workers[0].stop();
+                        workers[1].stop();
+                        let result = Command::new("/usr/bin/python3").args(["scripts/swap_symbol.py", requested]).current_dir(ROOT)
+                            .env("PAPER_ACCOUNT_ID", &account).output();
+                        match result {
+                            Ok(output) if output.status.success() => {
+                                match active_symbol() {
+                                    Ok(changed) => {
+                                        workers[0].args[1] = changed.clone();
+                                        workers[0].failures = 0;
+                                        workers[0].next_start = Instant::now();
+                                        workers[1].failures = 0;
+                                        workers[1].next_start = Instant::now();
+                                        format!("active symbol changed to {changed}")
+                                    }
+                                    Err(error) => format!("symbol changed but configuration reload failed: {error}"),
+                                }
+                            }
+                            Ok(output) => {
+                                workers[0].next_start = Instant::now();
+                                workers[1].next_start = Instant::now();
+                                format!("symbol change rejected: {}", String::from_utf8_lossy(&output.stderr).trim())
+                            }
+                            Err(error) => {
+                                workers[0].next_start = Instant::now();
+                                workers[1].next_start = Instant::now();
+                                format!("symbol change failed: {error}")
+                            }
+                        }
+                    },
                     _ => "unknown command".into(),
                 };
                 let _ = stream.write_all(answer.as_bytes());

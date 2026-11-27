@@ -30,3 +30,6 @@ native-build/
 *.spec
 *.csv
 strategy_lab_runs/
+state/
+promotions/
+research/

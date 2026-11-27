@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Local Moomoo-backed tester/optimizer dashboard with paper execution.
 
-The backtest side fetches 1-minute US.ANT candles from Moomoo OpenD,
+The backtest side fetches active-symbol 1-minute candles from Moomoo OpenD,
 stores them in SQLite, and evaluates the bounded test window. The execution
 side starts the local bot with TrdEnv.SIMULATE only; it refuses accounts that
 are not reported as SIMULATE by OpenD.
@@ -39,13 +39,14 @@ from market_data import fetch_moomoo_candles as fetch_source_candles
 from minute_bars import MINUTE_INTERVALS, aggregate_us_session
 from quant_storage import load_candles, save_backtest, save_candles
 from quant_api import data_api, risk_json, strategy_api, write_live_strategy
+from trading_config import active_symbol, normalize_symbol, state_path, strategy_path
 
 
 ROOT = Path(__file__).resolve().parent
 PORT = 8780
 MAX_BACKTEST_DAYS = 30
 ENGINE_BINARY = ROOT / "ai_gateway/target/release/trading_engine"
-ENGINE_PLIST = Path.home() / "Library/LaunchAgents/com.local.us-ant-engine.plist"
+ENGINE_PLIST = Path.home() / "Library/LaunchAgents/com.local.trading-engine.plist"
 
 
 def configured_paper_account() -> int:
@@ -53,15 +54,16 @@ def configured_paper_account() -> int:
         return STANDARD_PAPER_ACCOUNT_ID
     try:
         with ENGINE_PLIST.open("rb") as handle:
-            return int(plistlib.load(handle)["EnvironmentVariables"]["US_ANT_PAPER_ACCOUNT_ID"])
+            values = plistlib.load(handle)["EnvironmentVariables"]
+            return int(values["PAPER_ACCOUNT_ID"])
     except (OSError, KeyError, TypeError, ValueError):
         return 0
 
 
 PAPER_ACCOUNT_ID = configured_paper_account()
-BOT_STATE_PATH = ROOT / "competition_bot_state.json"
+BOT_STATE_PATH = state_path()
 INSTANCE_LOCK_PATH = Path(__file__).with_name("quant_dashboard.lock")
-SYMBOL = "US.ANT"
+SYMBOL = active_symbol()
 INTERVAL_MINUTES = 10
 backtest_lock = threading.Lock()
 backtest_job: dict[str, Any] = {"state": "idle", "done": 0, "total": 0, "message": "Idle"}
@@ -123,7 +125,7 @@ def execution_status() -> dict[str, Any]:
             bar_interval = int(persisted_interval) if persisted_interval in BAR_INTERVAL_TYPES else DEFAULT_BAR_INTERVAL
             return {
                 "active": True,
-                "symbols": ["US.ANT"],
+                "symbols": [SYMBOL],
                 "account_index": None,
                 "account_id": PAPER_ACCOUNT_ID,
                 "mode": "SIMULATE",
@@ -147,15 +149,15 @@ def stop_external_bot() -> None:
 
 
 def start_bot(symbols: list[str], acc_index: int, bar_interval: int = DEFAULT_BAR_INTERVAL) -> dict[str, Any]:
-    if [str(symbol).upper().removeprefix("US.") for symbol in symbols] != ["ANT"]:
-        raise ValueError("only US.ANT is permitted by the active paper bot")
+    if [normalize_symbol(symbol) for symbol in symbols] != [SYMBOL]:
+        raise ValueError(f"paper bot symbol must match configured active symbol {SYMBOL}")
     if bar_interval not in BAR_INTERVAL_TYPES:
         raise ValueError(f"unsupported bar interval: {bar_interval}")
     available = accounts()
     account = next((item for item in available if int(item.get("acc_id", 0)) == PAPER_ACCOUNT_ID), None)
     if not account or str(account.get("trd_env", "")).upper() != "SIMULATE":
         raise ValueError(f"Required standard SIMULATE account {PAPER_ACCOUNT_ID} is unavailable")
-    published_interval = int(json.loads((ROOT / "paper_bot_live_strategy.json").read_text())["interval"])
+    published_interval = int(json.loads(strategy_path(SYMBOL).read_text())["interval"])
     if bar_interval != published_interval:
         raise ValueError("change the published paper strategy interval before starting the bot")
     started = subprocess.run([str(ENGINE_BINARY), "bot-start"], capture_output=True, text=True, timeout=5, check=False)
@@ -166,10 +168,9 @@ def start_bot(symbols: list[str], acc_index: int, bar_interval: int = DEFAULT_BA
 
 
 def do_backtest(payload: dict[str, Any], progress=None) -> dict[str, Any]:
-    raw_symbol = str(payload.get("symbol") or payload.get("data_path") or SYMBOL).upper().strip()
-    symbol = "US.ANT" if raw_symbol in {"", "ANT", "US.ANT"} else raw_symbol
+    symbol = normalize_symbol(payload.get("symbol") or payload.get("data_path") or SYMBOL)
     if symbol != SYMBOL:
-        raise ValueError("This dashboard is configured for US.ANT")
+        raise ValueError(f"This dashboard is configured for {SYMBOL}")
     today = pd.Timestamp.now().normalize()
     requested_end = normalize_date(payload.get("end", today.strftime("%Y-%m-%d")), "end")
     requested_end_date = pd.Timestamp(min(requested_end, today.strftime("%Y-%m-%d")))
@@ -300,7 +301,7 @@ async function refreshBot(){const d=await (await fetch('/api/status')).json();if
 </script></body></html>'''
 
 
-HTML = HTML.replace("</script></body></html>", "</script><script>el('run').onclick=async function(){el('testStatus').textContent='Starting Moomoo fetch...';const p={symbol:el('symbol').value||'US.ANT',start:el('start').value,end:el('end').value,interval:Number(el('interval').value),capital:Number(el('capital').value),allocation:Number(el('allocation').value),slippage_bps:Number(el('slippage').value),optimize:el('optimize').checked};try{const r=await fetch('/api/backtest/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(p)});const a=await r.json();if(a.state==='error')throw Error(a.error);let s;do{await new Promise(x=>setTimeout(x,1000));s=await (await fetch('/api/backtest/status')).json();el('testStatus').textContent=s.total?s.message+' · '+s.done+'/'+s.total:'Fetching Moomoo candles...'}while(s.state==='running');if(s.state==='error')throw Error(s.error||s.message);el('testStatus').textContent='Complete · SQLite run '+s.result.run_id;el('summary').innerHTML='<h2>US.ANT tester results</h2><div class=\"cards\">'+[['Return',s.result.stats.total_return_pct+'%'],['Max drawdown',s.result.stats.max_drawdown_pct+'%'],['Trades',s.result.stats.trades],['Win rate',s.result.stats.win_rate_pct+'%'],['Profit factor',s.result.stats.profit_factor]].map(v=>'<div class=\"card\"><span>'+v[0]+'</span><strong>'+v[1]+'</strong></div>').join('')+'</div>';for(const [id,key] of [['price','price'],['equity','equity'],['monthly','monthly']]){el(id).src='data:image/png;base64,'+s.result.charts[key];el(id).hidden=false}el('optimiser').innerHTML=s.result.optimization.map((r,i)=>'<tr><td>'+(i+1)+'</td><td>'+r.stats.total_return_pct+'</td><td>'+r.stats.max_drawdown_pct+'</td><td>'+r.stats.trades+'</td><td>'+r.stats.win_rate_pct+'</td><td>'+r.stats.profit_factor+'</td><td>'+JSON.stringify(r.params)+'</td></tr>').join('')}catch(e){el('testStatus').textContent=e.message}};</script></body></html>")
+HTML = HTML.replace("US.ANT", SYMBOL).replace("['ANT']", "['" + SYMBOL + "']")
 
 HTML = HTML.replace('value="2026-01-01"', 'value="2026-10-17"').replace('value="2026-11-13"', 'value="2026-11-16"').replace('value="2025-10-01"', 'value="2026-10-17"').replace('value="2026-11-11"', 'value="2026-11-16"').replace('value=".95"', 'value="1.0"')
 HTML = HTML.replace('<button class="btn" id="run">Run tester</button>', '<button class="btn" id="run">Run tester</button><button class="btn stop" id="stopBacktest">Stop tester</button>')

@@ -12,10 +12,12 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from us_market_calendar import session_phase as market_session_phase
+from trading_config import active_symbol, research_dir, strategy_path
 
 ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "quant_dashboard.sqlite3"
-STATE = ROOT / ".research_scheduler_state.json"
+SYMBOL = active_symbol()
+STATE = research_dir(SYMBOL) / "scheduler_state.json"
 RERUN_INTERVAL = dt.timedelta(minutes=15)
 PREMARKET_CANDIDATES = "20000"
 PREMARKET_FAST_CANDIDATES = "500"
@@ -33,14 +35,14 @@ def session_phase(now: dt.datetime) -> str:
 
 def latest_session() -> str | None:
     with sqlite3.connect(DB) as db:
-        value = db.execute("select max(time_key) from candles where symbol='US.ANT' and interval_minutes=1").fetchone()[0]
+        value = db.execute("select max(time_key) from candles where symbol=? and interval_minutes=1", (SYMBOL,)).fetchone()[0]
     return str(value)[:10] if value else None
 
 
 def active_intervals() -> str:
     """Focus intraday research around the currently published interval."""
     try:
-        config = json.loads((ROOT / "paper_bot_live_strategy.json").read_text())
+        config = json.loads(strategy_path(SYMBOL).read_text())
         center = int(config.get("interval", 1))
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         center = 1
@@ -88,7 +90,7 @@ def main() -> int:
     budget = PREMARKET_FAST_CANDIDATES if fast_premarket else (PREMARKET_CANDIDATES if phase == "PREMARKET" else RTH_CANDIDATES)
     STATE.write_text(json.dumps({"state": "RUNNING", "session": session, "phase": phase, "started_at": now.isoformat()}, indent=2) + "\n")
     eastern_date = now.astimezone(ET).date().isoformat()
-    command = ["/usr/bin/nice", "-n", "10", sys.executable, str(ROOT / "scripts/app_minute_interval_sweep.py"), "--start", "2020-01-01", "--end", eastern_date, "--total-candidates", budget, "--phase", phase, "--ai"]
+    command = ["/usr/bin/nice", "-n", "10", sys.executable, str(ROOT / "scripts/app_minute_interval_sweep.py"), "--symbol", SYMBOL, "--start", "2020-01-01", "--end", eastern_date, "--total-candidates", budget, "--phase", phase, "--ai"]
     if phase == "RTH" or fast_premarket:
         command.extend(["--intervals", active_intervals()])
     result = subprocess.run(command, cwd=ROOT, check=False)

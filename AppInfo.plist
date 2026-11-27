@@ -2,10 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleDisplayName</key><string>US.ANT Paper Trader</string>
-	<key>CFBundleExecutable</key><string>US.ANT Paper Trader</string>
-	<key>CFBundleIdentifier</key><string>com.local.us-ant-paper-trader</string>
-	<key>CFBundleName</key><string>US.ANT Paper Trader</string>
+	<key>CFBundleDisplayName</key><string>Moomoo Paper Trader</string>
+	<key>CFBundleExecutable</key><string>Moomoo Paper Trader</string>
+	<key>CFBundleIdentifier</key><string>com.local.moomoo-paper-trader</string>
+	<key>CFBundleName</key><string>Moomoo Paper Trader</string>
 	<key>CFBundlePackageType</key><string>APPL</string>
 	<key>CFBundleVersion</key><string>1</string>
 	<key>CFBundleShortVersionString</key><string>1.0</string>

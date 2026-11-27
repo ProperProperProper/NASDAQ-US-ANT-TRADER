@@ -3,10 +3,10 @@ set -u
 
 OPEN_D_HOST="127.0.0.1"
 OPEN_D_PORT="11111"
-BOT_LABEL="com.local.us-ant-engine"
+BOT_LABEL="com.local.trading-engine"
 ENGINE="/Users/local.local/Projects/TradingSystem/ai_gateway/target/release/trading_engine"
 PLIST="$HOME/Library/LaunchAgents/${BOT_LABEL}.plist"
-REQUIRED_ACCOUNT_ID="${US_ANT_PAPER_ACCOUNT_ID:-$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:US_ANT_PAPER_ACCOUNT_ID' "$PLIST" 2>/dev/null)}"
+REQUIRED_ACCOUNT_ID="${PAPER_ACCOUNT_ID:-$(/usr/libexec/PlistBuddy -c 'Print :EnvironmentVariables:PAPER_ACCOUNT_ID' "$PLIST" 2>/dev/null)}"
 
 if ! /usr/bin/nc -z -G 2 "$OPEN_D_HOST" "$OPEN_D_PORT" >/dev/null 2>&1; then
   print -u2 "Moomoo OpenD is not reachable on ${OPEN_D_HOST}:${OPEN_D_PORT}"

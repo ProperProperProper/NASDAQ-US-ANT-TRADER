@@ -1,7 +1,8 @@
 import Cocoa
 
-let botPlist = "/Users/local.local/Library/LaunchAgents/com.local.us-ant-engine.plist"
+let botPlist = "/Users/local.local/Library/LaunchAgents/com.local.trading-engine.plist"
 let engineBinary = "/Users/local.local/Projects/TradingSystem/ai_gateway/target/release/trading_engine"
+let projectRoot = "/Users/local.local/Projects/TradingSystem"
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow!
@@ -17,13 +18,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let progress = NSProgressIndicator()
     let progressLabel = NSTextField(labelWithString: "0%")
     let output = NSTextView()
+    let symbolField = NSTextField(string: "US.ANT")
     var sweepProcess: Process?
     var sweepBuffer = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         terminateStaleAppInstances()
         window = NSWindow(contentRect: NSMakeRect(0, 0, 720, 560), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "US.ANT Paper Trader"
+        window.title = "Moomoo Paper Trader"
         window.center()
         buildUI()
         window.makeKeyAndOrderFront(nil)
@@ -76,7 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let root = NSView(frame: NSMakeRect(0, 0, 720, 560))
         window.contentView = root
 
-        let title = label("US.ANT Paper Trader", size: 24)
+        let title = label("Moomoo Paper Trader", size: 24)
         title.font = NSFont.boldSystemFont(ofSize: 24)
         title.frame = NSMakeRect(24, 505, 420, 32)
         root.addSubview(title)
@@ -128,6 +130,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let stopButton = button("Stop bot", #selector(stopBot))
         stopButton.frame = NSMakeRect(430, 85, 100, 30)
         runtime.addSubview(stopButton)
+        symbolField.frame = NSMakeRect(535, 88, 125, 24)
+        symbolField.placeholderString = "US.AAPL"
+        runtime.addSubview(symbolField)
+        let symbolButton = button("Apply symbol", #selector(applySymbol))
+        symbolButton.frame = NSMakeRect(535, 53, 125, 30)
+        runtime.addSubview(symbolButton)
 
         let research = NSBox(frame: NSMakeRect(20, 20, 680, 240))
         research.title = "Interval research"
@@ -183,10 +191,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func refresh() {
+        runCommand("/usr/bin/python3", ["-c", "import json; print(json.load(open('\(projectRoot)/trading_system.json'))['active_symbol'])"]) { _, output in
+            DispatchQueue.main.async { self.symbolField.stringValue = output.trimmingCharacters(in: .whitespacesAndNewlines) }
+        }
         runCommand("/usr/bin/nc", ["-z", "127.0.0.1", "11111"]) { code, _ in
             DispatchQueue.main.async { self.openD.stringValue = code == 0 ? "READY · 127.0.0.1:11111" : "OFFLINE" }
         }
-        let root = "/Users/local.local/Projects/TradingSystem"
+        let root = projectRoot
         runCommand("/usr/bin/nc", ["-z", "127.0.0.1", "8081"]) { sentinelCode, _ in
             self.runCommand("/usr/bin/nc", ["-z", "127.0.0.1", "8788"]) { gatewayCode, _ in
                 DispatchQueue.main.async {
@@ -207,7 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.account.stringValue = value == nil ? "SIMULATE · account unavailable" : "\(environment) · \(accountID) · \(side) \(qty) · orders \(orders)"
             }
         }
-        runCommand("/usr/bin/python3", ["-c", "import json, os; p='\(root)/.research_scheduler_state.json'; d=json.load(open(p)) if os.path.exists(p) else {}; print('scheduled: ' + str(d.get('state','NOT RUN')) + (' · ' + str(d.get('session')) if d.get('session') else ''))"]) { _, output in
+        runCommand("/usr/bin/python3", ["-c", "import sys,json,os; sys.path.insert(0,'\(root)'); from trading_config import active_symbol,research_dir; p=research_dir(active_symbol())/'scheduler_state.json'; d=json.load(open(p)) if p.exists() else {}; print('scheduled: ' + str(d.get('state','NOT RUN')) + (' · ' + str(d.get('session')) if d.get('session') else ''))"]) { _, output in
             DispatchQueue.main.async {
                 if self.sweepProcess?.isRunning != true {
                     let value = output.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -215,16 +226,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        runCommand("/usr/bin/python3", ["-c", "import json; p=json.load(open('\(root)/paper_bot_live_strategy.json')); print(f'{p.get(\"interval\",\"?\")}m · lookback {p.get(\"params\",{}).get(\"grid_lookback\",\"?\")} · {p.get(\"mode\",\"?\")}')"]) { _, output in
+        runCommand("/usr/bin/python3", ["-c", "import sys,json; sys.path.insert(0,'\(root)'); from trading_config import active_symbol,strategy_path; p=json.load(open(strategy_path())); print(f'{active_symbol()} · {p.get(\"interval\",\"?\")}m · lookback {p.get(\"params\",{}).get(\"grid_lookback\",\"?\")} · {p.get(\"mode\",\"?\")}')"]) { _, output in
             DispatchQueue.main.async { self.strategy.stringValue = output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "UNAVAILABLE" : output.trimmingCharacters(in: .whitespacesAndNewlines) }
         }
-        runCommand("/usr/bin/sqlite3", ["\(root)/quant_dashboard.sqlite3", "select coalesce(max(time_key),'none') || ' · ' || count(*) || ' candles' from candles where symbol='US.ANT' and interval_minutes=1;"]) { _, output in
+        runCommand("/usr/bin/python3", ["-c", "import sys,sqlite3; sys.path.insert(0,'\(root)'); from trading_config import active_symbol; db=sqlite3.connect('\(root)/quant_dashboard.sqlite3'); print(db.execute(\"select coalesce(max(time_key),'none') || ' · ' || count(*) || ' candles' from candles where symbol=? and interval_minutes=1\",(active_symbol(),)).fetchone()[0])"]) { _, output in
             DispatchQueue.main.async { self.cache.stringValue = output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "UNAVAILABLE" : output.trimmingCharacters(in: .whitespacesAndNewlines) }
         }
-        runCommand("/usr/bin/python3", ["-c", "import glob,json,os; files=sorted(glob.glob('\(root)/strategy_lab_runs/ANT-MINUTE-*/summary.json')); d=json.load(open(files[-1])) if files else {}; w=d.get('winner') or {}; p=w.get('params') or {}; print('Winning strategy: ' + str(w.get('interval','none')) + ' · PnL ' + str(w.get('total_return_pct','?')) + '% · DD ' + str(w.get('max_drawdown_pct','?')) + '% · trades ' + str(w.get('trades','?')) + ' · params ' + json.dumps(p, separators=(',',':')))"]) { _, output in
+        runCommand("/usr/bin/python3", ["-c", "import sys,glob,json; sys.path.insert(0,'\(root)'); from trading_config import active_symbol,research_dir; files=sorted(glob.glob(str(research_dir(active_symbol())/'runs/*/summary.json'))); d=json.load(open(files[-1])) if files else {}; w=d.get('winner') or {}; p=w.get('params') or {}; print('Winning strategy: ' + str(w.get('interval','none')) + ' · PnL ' + str(w.get('total_return_pct','?')) + '% · DD ' + str(w.get('max_drawdown_pct','?')) + '% · trades ' + str(w.get('trades','?')) + ' · params ' + json.dumps(p, separators=(',',':')))"]) { _, output in
             DispatchQueue.main.async { self.winner.stringValue = output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Winning strategy: no completed result" : output.trimmingCharacters(in: .whitespacesAndNewlines) }
         }
-        runCommand("/usr/bin/python3", ["-c", "import glob,json; f=sorted(glob.glob('\(root)/strategy_lab_runs/ANT-MINUTE-*/summary.json')); d=json.load(open(f[-1])) if f else {}; r=d.get('results') or []; print(json.dumps({'run':f[-1].split('/')[-2] if f else 'none','candidates':d.get('randomized_candidates',0),'ai':d.get('ai_proposals',0),'saved':d.get('profitable_saved',0),'rows':['%s  %+.3f%%  %s trades' % (x.get('interval','?'), (x.get('best') or {}).get('stats',{}).get('total_return_pct',0), (x.get('best') or {}).get('stats',{}).get('trades',0)) for x in r]}))"]) { _, output in
+        runCommand("/usr/bin/python3", ["-c", "import sys,glob,json; sys.path.insert(0,'\(root)'); from trading_config import active_symbol,research_dir; f=sorted(glob.glob(str(research_dir(active_symbol())/'runs/*/summary.json'))); d=json.load(open(f[-1])) if f else {}; r=d.get('results') or []; print(json.dumps({'run':f[-1].split('/')[-2] if f else 'none','candidates':d.get('randomized_candidates',0),'ai':d.get('ai_proposals',0),'saved':d.get('profitable_saved',0),'rows':['%s  %+.3f%%  %s trades' % (x.get('interval','?'), (x.get('best') or {}).get('stats',{}).get('total_return_pct',0), (x.get('best') or {}).get('stats',{}).get('trades',0)) for x in r]}))"]) { _, output in
             DispatchQueue.main.async {
                 guard let data = output.data(using: .utf8), let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
                 let candidates = value["candidates"] as? Int ?? 0
@@ -259,6 +270,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         runCommand(engineBinary, ["bot-stop"]) { _, _ in self.refresh() }
     }
 
+    @objc func applySymbol() {
+        let requested = symbolField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !requested.isEmpty else { return }
+        status.stringValue = "VALIDATING SYMBOL…"
+        runCommand(engineBinary, ["symbol-set", requested]) { code, output in
+            DispatchQueue.main.async {
+                self.status.stringValue = code == 0 ? output.trimmingCharacters(in: .whitespacesAndNewlines) : "SYMBOL CHANGE REJECTED · \(output)"
+                self.refresh()
+            }
+        }
+    }
+
     @objc func startSweep() {
         if sweepProcess?.isRunning == true { return }
         sweepStatus.stringValue = "Running 100k randomized tests over 5 sessions…"
@@ -267,7 +290,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         progressLabel.stringValue = "0%"
         output.string = "INTERVAL   RETURN       EQUITY       TRADES\nWaiting for interval results…"
         sweepBuffer = ""
-        let root = "/Users/local.local/Projects/TradingSystem"
+        let root = projectRoot
         runCommand("/usr/bin/nc", ["-z", "127.0.0.1", "8788"]) { code, _ in
             if code == 0 {
                 self.launchSweep(root: root)
@@ -282,7 +305,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         let today = String(ISO8601DateFormatter().string(from: Date()).prefix(10))
-        process.arguments = ["\(root)/scripts/app_minute_interval_sweep.py", "--symbol", "US.ANT", "--start", "2026-01-01", "--end", today, "--total-candidates", "100000", "--ai"]
+        process.arguments = ["\(root)/scripts/app_minute_interval_sweep.py", "--symbol", symbolField.stringValue, "--start", "2026-01-01", "--end", today, "--total-candidates", "100000", "--ai"]
         process.currentDirectoryURL = URL(fileURLWithPath: root)
         let pipe = Pipe()
         process.standardOutput = pipe

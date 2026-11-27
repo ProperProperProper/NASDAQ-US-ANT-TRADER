@@ -8,10 +8,10 @@ macOS services used to run it.
 | Component | Current behavior |
 |---|---|
 | Moomoo OpenD | Required on `127.0.0.1:11111` |
-| Rust engine | `ai_gateway/target/release/trading_engine`, launchd label `com.local.us-ant-engine` |
-| Paper bot | `competition_bot.py`, US.ANT, locally configured standard SIMULATE account |
+| Rust engine | `ai_gateway/target/release/trading_engine`, launchd label `com.local.trading-engine` |
+| Paper bot | `competition_bot.py`, configured active US symbol, locally configured standard SIMULATE account |
 | Initial paper bar | 10 minutes; replaced only by an eligible completed sweep |
-| Native app | `/Applications/US.ANT Paper Trader.app` |
+| Native app | `/Applications/Moomoo Paper Trader.app` |
 | Database | `quant_dashboard.sqlite3` (local research cache) |
 | Watchdog | `watch_moomoo_paper_stack.sh` |
 | Research scheduler | launchd checker every minute; reruns the same cached session 15 minutes after a successful sweep, at low CPU priority |
@@ -20,7 +20,18 @@ The native app controls the paper worker through the Rust engine's local Unix
 socket. One launchd job owns the paper bot, research scheduler, AI gateway, and
 MLX Sentinel. Moomoo OpenD remains a separate broker application. The Moomoo
 and MLX integrations remain Python workers inside the Rust-supervised runtime.
-Only the engine's local launch plist supplies `US_ANT_PAPER_ACCOUNT_ID`.
+Only the engine's local launch plist supplies `PAPER_ACCOUNT_ID`.
+
+Change the single active symbol with:
+
+```bash
+ai_gateway/target/release/trading_engine symbol-set US.AAPL
+```
+
+The engine stops the paper worker and refuses the change unless the current and
+requested symbols are flat with no pending orders on the verified standard
+SIMULATE account. Strategies, runtime state, pending promotions, and research
+artifacts are isolated by symbol.
 
 Research runs in a separate low-priority process. Eligible winners are
 automatically queued. The paper bot checks its SIMULATE broker position and
@@ -68,9 +79,9 @@ stored with a `local_1m_aggregation` source marker.
 ## Start and health checks
 
 ```sh
-launchctl print gui/$(id -u)/com.local.us-ant-engine
+launchctl print gui/$(id -u)/com.local.trading-engine
 ./ai_gateway/target/release/trading_engine status
-open -a "/Applications/US.ANT Paper Trader.app"
+open -a "/Applications/Moomoo Paper Trader.app"
 ```
 
 While running, `/api/status` should report `active: true`,
@@ -104,7 +115,7 @@ date window, costs, and strategy settings are the same.
   them.
 - Keep the native app and bot local. Do not publish the bot through an
   unauthenticated reverse proxy.
-- HARD RULE: research promotion requires at least two completed US.ANT sessions
+- HARD RULE: same-symbol research promotion requires at least two completed sessions
   and at least two trades, positive return after costs, and a better result
   than the current paper strategy on the tested data. Eligible winners are
   promoted automatically through the broker-verified flat-position gate.

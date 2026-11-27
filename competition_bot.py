@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Moomoo paper-competition bot for the US.ANT causal price-grid strategy.
+"""Moomoo paper bot for the configured US-symbol causal price-grid strategy.
 
 The bot is paper-only by construction: every order uses TrdEnv.SIMULATE.
 Order submission additionally requires --live-paper. Without that flag the
@@ -44,8 +44,9 @@ from moomoo import (
 
 from quant_storage import save_candles, save_execution_event
 from minute_bars import MINUTE_INTERVALS, aggregate_us_session
-from quant_api import LIVE_STRATEGY_PATH, audit_api, risk_api, strategy_api
+from quant_api import audit_api, risk_api, strategy_api
 from strategy_57pct import BASELINE
+from trading_config import active_symbol, normalize_symbol, promotion_path, state_path, strategy_path
 from us_market_calendar import session_close, session_exit_time
 
 
@@ -56,13 +57,12 @@ MAX_GRID_LOOKBACK = 240
 MIN_BARS = MAX_GRID_LOOKBACK + 5
 OPEN_D_SOCKET_TIMEOUT_SECONDS = 20
 DEFAULT_BAR_INTERVAL = 10
-STANDARD_PAPER_ACCOUNT_ID = int(os.environ.get("US_ANT_PAPER_ACCOUNT_ID", "0"))
-ACTIVE_SYMBOL = "US.ANT"
+STANDARD_PAPER_ACCOUNT_ID = int(os.environ.get("PAPER_ACCOUNT_ID", "0"))
+ACTIVE_SYMBOL = active_symbol()
 BAR_INTERVAL_TYPES = {minutes: KLType.K_1M for minutes in MINUTE_INTERVALS}
 ET = ZoneInfo("America/New_York")
-STATE_PATH = Path(__file__).with_name("competition_bot_state.json")
 LOG_PATH = Path(__file__).with_name("competition_bot.log")
-PENDING_PROMOTION_PATH = Path(__file__).with_name("pending_paper_strategy_promotion.json")
+LEGACY_STATE_PATH = Path(__file__).with_name("competition_bot_state.json")
 
 
 def setup_logging() -> None:
@@ -94,8 +94,7 @@ def count_open_positions(data: pd.DataFrame) -> int:
 
 
 def code(symbol: str) -> str:
-    symbol = symbol.upper().strip()
-    return symbol if "." in symbol else f"US.{symbol}"
+    return normalize_symbol(symbol)
 
 
 class CompetitionBot:
@@ -108,6 +107,9 @@ class CompetitionBot:
         if normalized_symbols != [ACTIVE_SYMBOL]:
             raise ValueError(f"only {ACTIVE_SYMBOL} is permitted by the active paper bot")
         self.symbols = normalized_symbols
+        self.state_path = state_path(ACTIVE_SYMBOL)
+        self.live_strategy_path = strategy_path(ACTIVE_SYMBOL)
+        self.pending_promotion_path = promotion_path(ACTIVE_SYMBOL)
         self.acc_index = acc_index
         self.acc_id = acc_id
         self.live_paper = live_paper
@@ -127,8 +129,9 @@ class CompetitionBot:
         )
 
     def _load_state(self) -> dict[str, Any]:
-        if STATE_PATH.exists():
-            state = json.loads(STATE_PATH.read_text())
+        source = self.state_path if self.state_path.exists() else LEGACY_STATE_PATH
+        if source.exists():
+            state = json.loads(source.read_text())
         else:
             state = {"last_bar": {}, "last_source_bar": {}, "entries": {}}
         state.setdefault("last_source_bar", {})
@@ -140,13 +143,15 @@ class CompetitionBot:
         self.state["break_even_armed"] = self.break_even_armed
         self.state["profit_lock_armed"] = self.profit_lock_armed
         self.state["bar_interval"] = self.bar_interval
-        STATE_PATH.write_text(json.dumps(self.state, indent=2) + "\n")
+        temporary = self.state_path.with_name(self.state_path.name + ".tmp")
+        temporary.write_text(json.dumps(self.state, indent=2) + "\n")
+        temporary.replace(self.state_path)
 
     def _strategy_config(self, symbol: str) -> tuple[int, dict[str, Any]]:
         """Reload the published paper interval and parameters on every cycle."""
         self._apply_pending_promotion(symbol)
         try:
-            payload = json.loads(LIVE_STRATEGY_PATH.read_text())
+            payload = json.loads(self.live_strategy_path.read_text())
             interval = int(payload.get("interval"))
             if (str(payload.get("symbol", "")).upper() == symbol
                     and interval in BAR_INTERVAL_TYPES
@@ -159,10 +164,10 @@ class CompetitionBot:
 
     def _apply_pending_promotion(self, symbol: str) -> None:
         """Apply a deferred paper promotion only after the broker is flat."""
-        if not PENDING_PROMOTION_PATH.exists():
+        if not self.pending_promotion_path.exists():
             return
         try:
-            payload = json.loads(PENDING_PROMOTION_PATH.read_text())
+            payload = json.loads(self.pending_promotion_path.read_text())
             if str(payload.get("symbol", "")).upper() != symbol:
                 return
             if payload.get("mode") != "SIMULATE" or int(payload.get("interval", 0)) not in BAR_INTERVAL_TYPES:
@@ -170,10 +175,10 @@ class CompetitionBot:
             qty, _ = self.position(symbol)
             if qty != 0 or self.pending_order_side(symbol):
                 return
-            temporary = LIVE_STRATEGY_PATH.with_name(LIVE_STRATEGY_PATH.name + ".tmp")
+            temporary = self.live_strategy_path.with_name(self.live_strategy_path.name + ".tmp")
             temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-            temporary.replace(LIVE_STRATEGY_PATH)
-            PENDING_PROMOTION_PATH.unlink()
+            temporary.replace(self.live_strategy_path)
+            self.pending_promotion_path.unlink()
             logging.info("applied deferred paper promotion symbol=%s interval=%sm", symbol, payload.get("interval"))
             save_execution_event("PAPER_PROMOTION_APPLIED", symbol, {"interval": payload.get("interval"), "run_id": payload.get("run_id"), "deferred": True, "paper": True})
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
@@ -582,7 +587,7 @@ def list_accounts() -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("symbols", nargs="*", help=f"active symbol only: {ACTIVE_SYMBOL} (or ANT)")
+    parser.add_argument("symbols", nargs="*", help=f"configured active symbol only: {ACTIVE_SYMBOL}")
     parser.add_argument("--acc-index", type=int, default=0, help="SIMULATE US account index from --list-accounts")
     parser.add_argument("--acc-id", type=int, default=STANDARD_PAPER_ACCOUNT_ID, help="SIMULATE account ID (must match local configuration)")
     parser.add_argument("--interval", type=int, default=POLL_SECONDS)

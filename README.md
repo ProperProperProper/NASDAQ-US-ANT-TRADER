@@ -1,6 +1,6 @@
 # Moomoo Paper Trading Bot & Native Research App
 
-Open-source Moomoo OpenD paper-trading system for US.ANT with a local SQLite
+Open-source Moomoo OpenD paper-trading system for one configurable US symbol with a local SQLite
 market-data cache, selectable 1–21 minute candle intervals, a causal candle-open
 grid-cross strategy, bounded research, risk APIs, audit logs, and a native macOS
 app. Designed for research and SIMULATE paper trading on Apple Silicon.
@@ -52,13 +52,13 @@ The 2 bps figure is an execution assumption, not a guarantee. Results depend on 
 
 ## Files
 
-- `competition_bot.py` — US.ANT paper-trading process.
+- `competition_bot.py` — active-symbol paper-trading process.
 - `ai_gateway/src/bin/trading_engine.rs` — Rust supervisor for the paper bot, research, gateway, and MLX workers.
 - `market_data.py` — local Moomoo 1-minute ingestion used by native research.
 - `DesktopApp.swift` — native macOS AppKit GUI source for runtime status, paper-bot controls, and interval research.
 - `ai_gateway/` — bundled Rust Multi-Model AI Gateway and its MCP bridge; the strategy lab no longer depends on a sibling project.
 - `docs/AI_ENGINEERING_CONTROLS.md` — provider-neutral AI safety, tool, prompt, evaluation, and release controls.
-- `scripts/app_minute_interval_sweep.py` — US.ANT 1m-through-10m research sweep built from the single 1m cache and limited to the latest 5 sessions.
+- `scripts/app_minute_interval_sweep.py` — active-symbol 1m-through-10m research sweep built from the single 1m cache and limited to the latest 5 sessions.
 - `ops/start_ai_gateway.sh` — starts the bundled gateway on `127.0.0.1:8788`.
 - `quant_storage.py` — SQLite candle, run, trade, and event storage.
 - `strategy_57pct.py` — strategy and walk-forward evaluation logic.
@@ -89,8 +89,20 @@ python3 competition_bot.py --list-accounts
 Run a paper-only check (omit `--live-paper` for signal-only mode):
 
 ```sh
-US_ANT_PAPER_ACCOUNT_ID='<local SIMULATE account ID>' python3 competition_bot.py ANT --bar-interval 2
+PAPER_ACCOUNT_ID='<local SIMULATE account ID>' python3 competition_bot.py US.ANT --bar-interval 2
 ```
+
+The active symbol is stored in `trading_system.json`. Change it through the
+guarded engine command:
+
+```sh
+ai_gateway/target/release/trading_engine symbol-set US.AAPL
+```
+
+The engine stops the paper worker, verifies the standard SIMULATE account,
+validates the Moomoo quote, and restarts with isolated symbol state. It refuses
+the change when the current or requested symbol has a position or active order.
+Each symbol has separate strategy, state, promotion, and research directories.
 
 Use the native app or launchd service for normal operation. See
 [`docs/PAPER_BOT_OPERATIONS.md`](docs/PAPER_BOT_OPERATIONS.md) for checks and
@@ -98,7 +110,7 @@ troubleshooting.
 
 ## Research engine
 
-Research fetches only `US.ANT` 1-minute candles from Moomoo OpenD with
+Research fetches only the configured active symbol's 1-minute candles from Moomoo OpenD with
 `request_history_kline`, caches the source candles in `quant_dashboard.sqlite3`,
 and aggregates complete regular-session bars locally for each requested interval
 from 1m through 10m. The interval sweep uses up to the latest 5 completed US
@@ -115,7 +127,7 @@ To compare every locally aggregated interval, run:
 python3 scripts/app_minute_interval_sweep.py --start 2026-01-01 --end 2026-11-23
 ```
 
-The final `winner` record in `strategy_lab_runs/ANT-MINUTE-*/summary.json` identifies the highest-return tested interval and parameters over the available session window. A completed sweep hot-swaps a configuration only after at least two completed US.ANT sessions and at least two trades support a normal-evidence result; otherwise the candidate is held for research and the existing SIMULATE configuration remains active. No live trading is enabled.
+The final `winner` record under `research/<symbol>/runs/` identifies the highest-return tested interval and parameters over the available session window. A completed sweep queues a same-symbol configuration only after at least two completed sessions and at least two trades support a normal-evidence result; otherwise the candidate is held for research and the existing SIMULATE configuration remains active. No live trading is enabled.
 
 ## Native macOS GUI
 
@@ -124,7 +136,7 @@ It controls the launchd-managed runtime directly, with the SIMULATE-only
 execution boundary shared by the bot:
 
 ```sh
-open -a "/Applications/US.ANT Paper Trader.app"
+open -a "/Applications/Moomoo Paper Trader.app"
 ```
 
 The GUI shows bot health and account, provides refresh/start/stop controls, maps each tested
