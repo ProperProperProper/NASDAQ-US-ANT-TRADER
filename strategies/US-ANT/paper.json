@@ -1,17 +1,17 @@
 {
-  "interval": 8,
+  "interval": 5,
   "mode": "SIMULATE",
   "params": {
     "entry_mode": "any_grid_cross",
-    "exit_mode": "top_breakdown",
-    "grid_intervals": 9,
-    "grid_lookback": 52,
+    "exit_mode": "bottom_breakdown",
+    "grid_intervals": 7,
+    "grid_lookback": 60,
     "stop_loss_pct": 0.1324,
     "take_profit_pct": 0.0274,
-    "trailing_activation_pct": 0.01,
-    "trailing_stop_pct": 0.01
+    "trailing_activation_pct": 0.005,
+    "trailing_stop_pct": 0.005
   },
-  "run_id": "ANT-MINUTE-20261127-005317",
+  "run_id": "US-ANT-MINUTE-20261128-004138",
   "symbol": "US.ANT",
-  "updated_at": "2026-11-26T14:05:39.854661+00:00"
+  "updated_at": "2026-11-27T13:49:34.627753+00:00"
 }
