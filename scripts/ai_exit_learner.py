@@ -68,8 +68,9 @@ def extract_position_features(
     strategy_params: dict[str, Any],
     hold_minutes: float = 0.0,
     peak_price: float = 0.0,
+    candles: Any = None,
 ) -> dict[str, Any]:
-    """Construct a clean, normalized quantitative feature vector from live data."""
+    """Construct a clean, normalized quantitative feature vector with convergence dynamics."""
     if peak_price <= 0:
         peak_price = max(avg_cost, current_price)
     unrealized_pl = (current_price - avg_cost) * shares
@@ -94,7 +95,45 @@ def extract_position_features(
     vwap = float(snapshot.get("avg_price", current_price) or current_price)
     dist_to_vwap_pct = ((current_price - vwap) / vwap) * 100.0 if vwap > 0 else 0.0
 
-    return {
+    convergence_telemetry = {}
+    if candles is not None and hasattr(candles, "__len__") and len(candles) >= 5:
+        try:
+            closes = candles["close"].astype(float)
+            ema_fast = closes.ewm(span=3, adjust=False).mean()
+            ema_slow = closes.ewm(span=8, adjust=False).mean()
+            diff = ema_fast - ema_slow
+            peak_diff = float(diff.tail(5).max())
+            curr_diff = float(diff.iloc[-1])
+            prev_diff = float(diff.iloc[-2]) if len(diff) >= 2 else curr_diff
+            diff_vel = curr_diff - prev_diff
+            ema_decay = (peak_diff - curr_diff) / peak_diff if peak_diff > 1e-4 else (1.0 if curr_diff < 0 else 0.0)
+
+            grid_lookback = max(2, min(240, int(strategy_params.get("grid_lookback", 45))))
+            prior_high = float(candles["high"].astype(float).tail(grid_lookback).max())
+            prior_low = float(candles["low"].astype(float).tail(grid_lookback).min())
+            span = prior_high - prior_low
+            exit_mode = str(strategy_params.get("exit_mode", "any_grid_cross_down"))
+            exit_level = prior_low + span * 0.25 if "lower_half" in exit_mode or "any_grid" in exit_mode else prior_low
+            curr_dist = current_price - exit_level
+            prev_dist = float(candles["close"].iloc[-2]) - exit_level if len(candles) >= 2 else curr_dist
+            grid_vel = curr_dist - prev_dist
+            bars_to_cross = (curr_dist / abs(grid_vel)) if (curr_dist > 0 and grid_vel < 0 and abs(grid_vel) > 1e-4) else (0.0 if curr_dist <= 0 else 99.0)
+
+            profit_giveback = ((peak_price - current_price) / (peak_price - avg_cost) * 100.0) if (peak_price > avg_cost and peak_price - avg_cost > 1e-5) else 0.0
+
+            convergence_telemetry = {
+                "fast_slow_ema_gap": round(curr_diff, 4),
+                "ema_decay_pct": round(ema_decay * 100.0, 1),
+                "ema_gap_velocity": round(diff_vel, 4),
+                "bars_to_grid_collision": round(bars_to_cross, 1) if bars_to_cross < 50 else ">10",
+                "dist_to_vwap_pct": round(dist_to_vwap_pct, 3),
+                "bid_ask_ratio": round(bid_ask_ratio, 1),
+                "profit_giveback_pct": round(profit_giveback, 1),
+            }
+        except Exception as exc:
+            logging.debug("convergence feature calculation failed: %s", exc)
+
+    feat = {
         "symbol": normalize_symbol(symbol),
         "shares": shares,
         "avg_cost": round(avg_cost, 4),
@@ -115,6 +154,9 @@ def extract_position_features(
         "turnover_rate": round(turnover_rate, 4),
         "dist_to_vwap_pct": round(dist_to_vwap_pct, 4),
     }
+    if convergence_telemetry:
+        feat["indicator_convergence"] = convergence_telemetry
+    return feat
 
 
 def evaluate_exit(
@@ -127,13 +169,14 @@ def evaluate_exit(
         analogues = load_historical_analogues(features["symbol"], limit=3)
 
     system_prompt = (
-        "You are Multi-Model AI Gateway's quantitative trade exit arbiter. "
-        "Evaluate the live trade micro-state and return a structured JSON decision. "
-        "You must determine whether to HOLD or EXIT based on capital preservation, "
-        "exhaustion wicks, order-book imbalance, and momentum stall. "
+        "You are Multi-Model AI Gateway's quantitative trade exit arbiter with reinforcement memory. "
+        "Evaluate the live trade micro-state and dynamic indicator convergence trajectory. "
+        "You must determine whether indicator convergence (fast/slow EMAs, price-to-grid collision, VWAP, order-book depth) "
+        "represents FATAL LOSS-INVERSION (where holding will surrender profit or cause a loss) vs HEALTHY CONSOLIDATION (hold runner). "
+        "Learn from past in-context historical trade outcomes to calibrate your judgment. "
         "Output ONLY valid JSON matching this exact schema: "
         '{"action": "HOLD"|"EXIT", "confidence": 0.0-1.0, '
-        '"signal_type": "PREVENTIVE_CUT"|"STALL_EXHAUSTION"|"RUNNER_EXTENSION"|"HOLD_NORMAL", '
+        '"signal_type": "CONVERGENCE_PROFIT_LOCK"|"CONVERGENCE_LOSS_MITIGATION"|"CONSOLIDATION_HOLD"|"RUNNER_EXTENSION"|"STALL_EXHAUSTION"|"PREVENTIVE_CUT", '
         '"reason": "<brief_technical_reason_under_15_words>"}. '
         "Do NOT provide prose, advice, or conversational disclaimers."
     )
@@ -147,6 +190,13 @@ def evaluate_exit(
                 "predicted_action": a.get("predicted_action"),
                 "optimal_action": a.get("optimal_action"),
                 "reward": a.get("counterfactual_reward"),
+                "convergence_setup": a.get("features", {}).get("indicator_convergence", {}),
+                "learning_lesson": (
+                    "EXIT saved profit ahead of collapse" if float(a.get("counterfactual_reward", 0) or 0) > 0 and a.get("predicted_action") == "EXIT"
+                    else "HOLD captured runner gains" if float(a.get("counterfactual_reward", 0) or 0) > 0 and a.get("predicted_action") == "HOLD"
+                    else "Premature EXIT; trade continued upward" if float(a.get("counterfactual_reward", 0) or 0) < 0 and a.get("predicted_action") == "EXIT"
+                    else "Failed to EXIT; trade reversed into loss"
+                ),
                 "reason": a.get("reason"),
             }
             for a in analogues

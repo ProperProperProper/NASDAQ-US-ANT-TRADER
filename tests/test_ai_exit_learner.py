@@ -10,6 +10,7 @@ from scripts.ai_exit_learner import (
     extract_position_features,
     resolve_counterfactual_outcomes,
     calibrate_confidence_threshold,
+    evaluate_exit,
 )
 from quant_storage import save_exit_evaluation, load_historical_analogues
 
@@ -67,6 +68,75 @@ class TestAIExitLearner(unittest.TestCase):
         analogues = load_historical_analogues("US.NVDA", limit=5)
         # Should be a list
         self.assertIsInstance(analogues, list)
+
+    def test_extract_position_features_with_convergence(self):
+        import pandas as pd
+        closes = [100.0, 100.4, 100.8, 101.5, 101.8, 101.4, 100.9]
+        highs = [100.2, 100.6, 101.0, 101.7, 102.0, 101.6, 101.1]
+        lows = [99.8, 100.2, 100.6, 101.3, 101.6, 101.2, 100.7]
+        candles = pd.DataFrame({"close": closes, "high": highs, "low": lows})
+
+        snapshot = {
+            "bid_price": 100.90,
+            "ask_price": 100.95,
+            "bid_ask_ratio": 36.0,
+            "avg_price": 101.00,
+        }
+        params = {"take_profit_pct": 0.02, "stop_loss_pct": 0.1324, "grid_lookback": 10}
+
+        features = extract_position_features(
+            symbol="US.MU",
+            shares=100,
+            avg_cost=100.0,
+            current_price=100.90,
+            snapshot=snapshot,
+            strategy_params=params,
+            peak_price=102.0,
+            candles=candles,
+        )
+
+        self.assertIn("indicator_convergence", features)
+        conv = features["indicator_convergence"]
+        self.assertIn("fast_slow_ema_gap", conv)
+        self.assertIn("ema_decay_pct", conv)
+        self.assertIn("ema_gap_velocity", conv)
+        self.assertIn("bars_to_grid_collision", conv)
+        self.assertIn("profit_giveback_pct", conv)
+        self.assertGreater(conv["profit_giveback_pct"], 50.0)
+
+    @patch("scripts.ai_exit_learner.query_gateway_chat")
+    def test_evaluate_exit_with_convergence_learning_exemplars(self, mock_chat):
+        mock_chat.return_value = {
+            "choices": [{"message": {"content": '{"action": "EXIT", "confidence": 0.88, "signal_type": "CONVERGENCE_PROFIT_LOCK", "reason": "momentum collapsed"}'}}],
+            "model": "gpt-oss-20b",
+        }
+        features = {
+            "symbol": "US.MU",
+            "shares": 100,
+            "avg_cost": 100.0,
+            "current_price": 100.90,
+            "return_pct": 0.90,
+            "indicator_convergence": {
+                "fast_slow_ema_gap": 0.05,
+                "ema_decay_pct": 68.0,
+                "ema_gap_velocity": -0.15,
+            },
+        }
+        mock_analogues = [
+            {
+                "symbol": "US.MU",
+                "return_pct": 0.85,
+                "hold_minutes": 15,
+                "predicted_action": "EXIT",
+                "optimal_action": "EXIT",
+                "counterfactual_reward": 1.0,
+                "reason": "Exited ahead of collapse",
+                "features": {"indicator_convergence": {"ema_decay_pct": 72.0}},
+            }
+        ]
+        res = evaluate_exit(features, analogues=mock_analogues)
+        self.assertEqual(res["decision"]["action"], "EXIT")
+        self.assertEqual(res["decision"]["signal_type"], "CONVERGENCE_PROFIT_LOCK")
 
 
 if __name__ == "__main__":

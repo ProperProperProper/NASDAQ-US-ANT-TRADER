@@ -228,13 +228,22 @@ def load_historical_analogues(symbol: str, limit: int = 3) -> list[dict[str, Any
     try:
         rows = db.execute(
             """SELECT symbol, return_pct, hold_minutes, predicted_action, optimal_action,
-                      counterfactual_reward, signal_type, reason, created_at
+                      counterfactual_reward, signal_type, reason, created_at, features_json
                FROM exit_evaluations
                WHERE symbol = ? AND resolved_at IS NOT NULL
                ORDER BY id DESC LIMIT ?""",
             (normalized, limit),
         ).fetchall()
-        return [dict(r) for r in rows]
+        result = []
+        for r in rows:
+            d = dict(r)
+            if d.get("features_json"):
+                try:
+                    d["features"] = json.loads(d["features_json"])
+                except Exception:
+                    d["features"] = {}
+            result.append(d)
+        return result
     finally:
         db.close()
 

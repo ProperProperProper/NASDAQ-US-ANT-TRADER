@@ -408,7 +408,8 @@ class AIExitArbiter:
             logging.error("Could not import ai_exit_learner in background thread.")
             return
 
-        from moomoo import TrdEnv, RET_OK
+        from moomoo import KLType, TrdEnv, RET_OK
+        from datetime import timedelta
 
         while self._running:
             try:
@@ -449,6 +450,25 @@ class AIExitArbiter:
                             except Exception:
                                 pass
 
+                        # Fetch recent 1m candles for dynamic indicator convergence
+                        candles_df = None
+                        try:
+                            now = datetime.now()
+                            start = (now - timedelta(days=2)).strftime("%Y-%m-%d")
+                            end = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+                            c_ret, c_data, _ = quote_ctx.request_history_kline(
+                                code,
+                                start=start,
+                                end=end,
+                                ktype=KLType.K_1M,
+                                max_count=60,
+                                extended_time=False,
+                            )
+                            if c_ret == RET_OK and c_data is not None and not c_data.empty:
+                                candles_df = c_data
+                        except Exception:
+                            pass
+
                         features = ai_exit_learner.extract_position_features(
                             symbol=code,
                             shares=shares,
@@ -456,9 +476,10 @@ class AIExitArbiter:
                             current_price=price,
                             snapshot=snap_dict,
                             strategy_params=params,
+                            candles=candles_df,
                         )
 
-                        analogues = load_historical_analogues(code, limit=3)
+                        analogues = load_historical_analogues(code, limit=4)
                         eval_result = ai_exit_learner.evaluate_exit(features, analogues=analogues)
                         ai_exit_learner.log_and_save_evaluation(features, eval_result)
 
@@ -469,6 +490,14 @@ class AIExitArbiter:
                                 code, decision.get("reason"), decision.get("confidence"),
                             )
                             self.approve_ai_exit(code, eval_result)
+
+                    # Continuous Reinforcement Resolution: resolve outcomes older than 5 minutes
+                    try:
+                        resolved_count = ai_exit_learner.resolve_counterfactual_outcomes(min_age_minutes=5)
+                        if resolved_count > 0:
+                            logging.info("Resolved %d counterfactual outcomes into exemplar memory.", resolved_count)
+                    except Exception as r_exc:
+                        logging.debug("Outcome resolution error: %s", r_exc)
 
             except Exception as exc:
                 logging.debug("Background AI exit loop error: %s", exc)
