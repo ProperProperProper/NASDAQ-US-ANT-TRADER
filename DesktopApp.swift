@@ -35,6 +35,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let multiSymbolField = NSTextField(string: "US.MRNA,US.ANT,US.NVDA,US.MU,US.SNDK,US.OMH,US.APP")
     var sweepProcess: Process?
     var sweepBuffer = ""
+    var refreshTimer: Timer?
+    var isRefreshing = false
+    var lastRefreshStarted: Date?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         terminateStaleAppInstances()
@@ -45,6 +48,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.center()
         window.makeKeyAndOrderFront(nil)
         refresh()
+        startAutoRefreshTimer()
+    }
+
+    private func startAutoRefreshTimer() {
+        refreshTimer?.invalidate()
+        let timer = Timer(timeInterval: 5.0, repeats: true) { [weak self] _ in
+            self?.refresh()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        refreshTimer = timer
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        refreshTimer?.invalidate()
     }
 
     private func terminateStaleAppInstances() {
@@ -290,6 +307,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func refresh() {
+        if isRefreshing, let last = lastRefreshStarted, Date().timeIntervalSince(last) < 10.0 {
+            return
+        }
+        isRefreshing = true
+        lastRefreshStarted = Date()
         runCommand("/usr/bin/python3", ["-c", "import json; print(json.load(open('\(projectRoot)/trading_system.json'))['active_symbol'])"]) { _, output in
             DispatchQueue.main.async { self.symbolField.stringValue = output.trimmingCharacters(in: .whitespacesAndNewlines) }
         }
@@ -424,6 +446,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DispatchQueue.main.async {
                 self.status.stringValue = running ? "RUNNING · SIMULATE · PID \(pid)" : "STOPPED"
                 if self.account.stringValue.isEmpty { self.account.stringValue = "SIMULATE · account unavailable" }
+                self.isRefreshing = false
             }
         }
     }
