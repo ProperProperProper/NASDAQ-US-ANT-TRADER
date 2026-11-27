@@ -18,8 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let progress = NSProgressIndicator()
     let progressLabel = NSTextField(labelWithString: "0%")
     let output = NSTextView()
-    let symbolField = NSTextField(string: "US.AAPL")
-    let multiSymbolField = NSTextField(string: "US.AAPL,US.ADP,US.ALRM,US.ADMA,US.ANT")
+    let symbolField = NSTextField(string: "US.MRNA")
+    let multiSymbolField = NSTextField(string: "US.MRNA,US.ANT,US.NVDA,US.MU,US.SNDK,US.OMH,US.APP")
     var sweepProcess: Process?
     var sweepBuffer = ""
 
@@ -132,7 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         stopButton.frame = NSMakeRect(430, 85, 100, 30)
         runtime.addSubview(stopButton)
         symbolField.frame = NSMakeRect(535, 88, 125, 24)
-        symbolField.placeholderString = "US.AAPL"
+        symbolField.placeholderString = "US.MRNA"
         symbolField.isEditable = false
         runtime.addSubview(symbolField)
         let symbolButton = button("Apply portfolio", #selector(applySymbol))
@@ -174,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sweepButton.frame = NSMakeRect(18, 12, 245, 30)
         research.addSubview(sweepButton)
         multiSymbolField.frame = NSMakeRect(275, 15, 210, 24)
-        multiSymbolField.placeholderString = "US.AAPL,US.ADP,US.ALRM,US.ADMA,US.ANT"
+        multiSymbolField.placeholderString = "US.MRNA,US.ANT,US.NVDA,US.MU,US.SNDK,US.OMH,US.APP"
         research.addSubview(multiSymbolField)
         let multiButton = button("Test symbols 1–10m", #selector(startMultiSymbolTest))
         multiButton.frame = NSMakeRect(495, 12, 165, 30)

@@ -22,8 +22,8 @@ ET = ZoneInfo("America/New_York")
 
 class GridStrategyTests(unittest.TestCase):
     def test_active_symbol_configuration_and_paths_are_isolated(self):
-        self.assertEqual(active_symbol(), "US.AAPL")
-        self.assertEqual(active_symbols(), ("US.AAPL", "US.ADP", "US.ALRM", "US.ADMA", "US.ANT"))
+        self.assertEqual(active_symbol(), "US.MRNA")
+        self.assertEqual(active_symbols(), ("US.MRNA", "US.ANT", "US.NVDA", "US.MU", "US.SNDK", "US.OMH", "US.APP"))
         self.assertEqual(normalize_symbol("aapl"), "US.AAPL")
         self.assertNotEqual(strategy_path("US.ANT"), strategy_path("US.AAPL"))
         with self.assertRaises(ValueError):
@@ -129,7 +129,7 @@ class GridStrategyTests(unittest.TestCase):
                 result = promote_winner({"interval": "8m", "params": {"grid_lookback": 52}, "run_id": "test"})
             self.assertEqual(result["state"], "QUEUED_BROKER_CHECK")
             payload = json.loads(pending.read_text())
-            self.assertEqual((payload["symbol"], payload["interval"], payload["mode"]), ("US.AAPL", 8, "SIMULATE"))
+            self.assertEqual((payload["symbol"], payload["interval"], payload["mode"]), ("US.MRNA", 8, "SIMULATE"))
             self.assertFalse((root / "paper_bot_live_strategy.json").exists())
 
     def test_research_phases_use_us_eastern_market_hours(self):
@@ -139,7 +139,7 @@ class GridStrategyTests(unittest.TestCase):
 
     def test_open_position_limit_counts_positive_holdings(self):
         positions = pd.DataFrame({"code": ["US.ANT", "US.X", "US.Y", "US.Z"], "qty": [10, 0, 3, 1]})
-        self.assertEqual(MAX_OPEN_POSITIONS, 5)
+        self.assertEqual(MAX_OPEN_POSITIONS, 7)
         self.assertEqual(count_open_positions(positions), 3)
 
     def test_open_position_limit_counts_short_holdings(self):

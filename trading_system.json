@@ -1,11 +1,13 @@
 {
-  "active_symbol": "US.AAPL",
+  "active_symbol": "US.MRNA",
   "active_symbols": [
-    "US.AAPL",
-    "US.ADP",
-    "US.ALRM",
-    "US.ADMA",
-    "US.ANT"
+    "US.MRNA",
+    "US.ANT",
+    "US.NVDA",
+    "US.MU",
+    "US.SNDK",
+    "US.OMH",
+    "US.APP"
   ],
   "market": "US",
   "minute_intervals": [
