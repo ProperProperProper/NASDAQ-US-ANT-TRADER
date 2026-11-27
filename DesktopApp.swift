@@ -428,7 +428,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func launchSweep(root: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        let today = String(ISO8601DateFormatter().string(from: Date()).prefix(10))
         process.arguments = ["\(root)/scripts/portfolio_ai_pipeline.py", "--symbols", multiSymbolField.stringValue, "--total-candidates", "100000", "--workers", "4"]
         process.currentDirectoryURL = URL(fileURLWithPath: root)
         let pipe = Pipe()
