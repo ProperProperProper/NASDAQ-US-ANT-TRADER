@@ -197,7 +197,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         output.backgroundColor = .controlBackgroundColor
         scroll.documentView = output
         research.addSubview(scroll)
-        let sweepButton = button("Run 100k randomized + AI tests", #selector(startSweep))
+        let sweepButton = button("AI optimise primary (100k)", #selector(startSweep))
         sweepButton.frame = NSMakeRect(18, 16, 255, 32)
         sweepButton.autoresizingMask = [.maxXMargin, .maxYMargin]
         research.addSubview(sweepButton)
@@ -205,7 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         multiSymbolField.autoresizingMask = [.width, .maxYMargin]
         multiSymbolField.placeholderString = "US.MRNA,US.ANT,US.NVDA,US.MU,US.SNDK,US.OMH,US.APP"
         research.addSubview(multiSymbolField)
-        let multiButton = button("Test symbols 1–10m", #selector(startMultiSymbolTest))
+        let multiButton = button("Compare portfolio 1–10m", #selector(startMultiSymbolTest))
         multiButton.frame = NSMakeRect(697, 16, 185, 32)
         multiButton.autoresizingMask = [.minXMargin, .maxYMargin]
         research.addSubview(multiButton)
