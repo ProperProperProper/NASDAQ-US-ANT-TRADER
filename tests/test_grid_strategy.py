@@ -23,7 +23,7 @@ ET = ZoneInfo("America/New_York")
 class GridStrategyTests(unittest.TestCase):
     def test_active_symbol_configuration_and_paths_are_isolated(self):
         self.assertEqual(active_symbol(), "US.AAPL")
-        self.assertEqual(active_symbols(), ("US.AAPL", "US.ADP", "US.ALRM", "US.ADMA"))
+        self.assertEqual(active_symbols(), ("US.AAPL", "US.ADP", "US.ALRM", "US.ADMA", "US.ANT"))
         self.assertEqual(normalize_symbol("aapl"), "US.AAPL")
         self.assertNotEqual(strategy_path("US.ANT"), strategy_path("US.AAPL"))
         with self.assertRaises(ValueError):
@@ -139,7 +139,7 @@ class GridStrategyTests(unittest.TestCase):
 
     def test_open_position_limit_counts_positive_holdings(self):
         positions = pd.DataFrame({"code": ["US.ANT", "US.X", "US.Y", "US.Z"], "qty": [10, 0, 3, 1]})
-        self.assertEqual(MAX_OPEN_POSITIONS, 4)
+        self.assertEqual(MAX_OPEN_POSITIONS, 5)
         self.assertEqual(count_open_positions(positions), 3)
 
     def test_open_position_limit_counts_short_holdings(self):

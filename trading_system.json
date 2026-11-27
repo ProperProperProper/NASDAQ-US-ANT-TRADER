@@ -1,6 +1,12 @@
 {
   "active_symbol": "US.AAPL",
-  "active_symbols": ["US.AAPL", "US.ADP", "US.ALRM", "US.ADMA"],
+  "active_symbols": [
+    "US.AAPL",
+    "US.ADP",
+    "US.ALRM",
+    "US.ADMA",
+    "US.ANT"
+  ],
   "market": "US",
   "minute_intervals": [
     1,
