@@ -130,11 +130,23 @@ class CompetitionBot:
     def _load_state(self) -> dict[str, Any]:
         source = self.state_path if self.state_path.exists() else LEGACY_STATE_PATH
         if source.exists():
-            state = json.loads(source.read_text())
+            try:
+                state = json.loads(source.read_text())
+                if not isinstance(state, dict):
+                    raise ValueError("bot state root must be an object")
+            except (OSError, ValueError, json.JSONDecodeError) as exc:
+                logging.error("ignoring unreadable bot state path=%s error=%s", source, exc)
+                state = {}
         else:
-            state = {"last_bar": {}, "last_source_bar": {}, "entries": {}}
-        state.setdefault("last_source_bar", {})
-        state.setdefault("pending", {})
+            state = {}
+        symbol_maps = (
+            "last_bar", "last_source_bar", "entries", "pending", "peak_prices",
+            "bar_intervals", "strategy_intervals", "strategy_params", "position_marks",
+            "position_faults", "session_exit_date",
+        )
+        for key in symbol_maps:
+            value = state.get(key)
+            state[key] = {symbol: item for symbol, item in value.items() if symbol in self.symbols} if isinstance(value, dict) else {}
         return state
 
     def _save_state(self) -> None:

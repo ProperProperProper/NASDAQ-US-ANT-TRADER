@@ -22,6 +22,21 @@ ET = ZoneInfo("America/New_York")
 
 
 class GridStrategyTests(unittest.TestCase):
+    def test_bot_state_prunes_removed_symbols_and_recovers_invalid_json(self):
+        bot = CompetitionBot.__new__(CompetitionBot)
+        bot.symbols = ["US.ANT"]
+        with tempfile.TemporaryDirectory() as directory:
+            bot.state_path = Path(directory) / "bot.json"
+            bot.state_path.write_text(json.dumps({"last_bar": {"US.ANT": "now", "US.OLD": "old"}, "pending": {"US.OLD": "BUY"}}))
+            with patch("competition_bot.LEGACY_STATE_PATH", Path(directory) / "legacy.json"):
+                state = bot._load_state()
+            self.assertEqual(state["last_bar"], {"US.ANT": "now"})
+            self.assertEqual(state["pending"], {})
+            bot.state_path.write_text("{truncated")
+            with patch("competition_bot.LEGACY_STATE_PATH", Path(directory) / "legacy.json"):
+                recovered = bot._load_state()
+            self.assertEqual(recovered["last_bar"], {})
+
     def test_2026_exchange_early_closes_are_supported(self):
         self.assertEqual(session_close(datetime(2026, 7, 2).date()).isoformat(), "13:00:00")
         self.assertEqual(session_close(datetime(2026, 11, 27).date()).isoformat(), "13:00:00")
