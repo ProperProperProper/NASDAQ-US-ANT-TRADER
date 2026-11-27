@@ -1,4 +1,4 @@
-"""Single source of truth for the active paper-trading symbol and local paths."""
+"""Single source of truth for the paper-trading portfolio and local paths."""
 from __future__ import annotations
 
 import json
@@ -22,17 +22,25 @@ def normalize_symbol(value: Any) -> str:
 
 def load_config() -> dict[str, Any]:
     payload = json.loads(CONFIG_PATH.read_text())
-    symbol = normalize_symbol(payload.get("active_symbol"))
+    configured = payload.get("active_symbols") or [payload.get("active_symbol")]
+    symbols = tuple(dict.fromkeys(normalize_symbol(value) for value in configured))
+    if not symbols:
+        raise ValueError("active_symbols must contain at least one US symbol")
+    symbol = symbols[0]
     if payload.get("market") != "US" or payload.get("mode") != "SIMULATE":
         raise ValueError("trading system must remain US and SIMULATE")
     intervals = tuple(int(value) for value in payload.get("minute_intervals", []))
     if intervals != tuple(range(1, 11)):
         raise ValueError("minute_intervals must be exactly 1 through 10")
-    return {**payload, "active_symbol": symbol, "minute_intervals": intervals}
+    return {**payload, "active_symbol": symbol, "active_symbols": symbols, "minute_intervals": intervals}
 
 
 def active_symbol() -> str:
     return str(load_config()["active_symbol"])
+
+
+def active_symbols() -> tuple[str, ...]:
+    return tuple(load_config()["active_symbols"])
 
 
 def symbol_slug(symbol: str | None = None) -> str:
@@ -65,6 +73,21 @@ def write_active_symbol(symbol: str) -> dict[str, Any]:
     normalized = normalize_symbol(symbol)
     payload = load_config()
     payload["active_symbol"] = normalized
+    payload["active_symbols"] = [normalized]
+    payload["minute_intervals"] = list(payload["minute_intervals"])
+    temporary = CONFIG_PATH.with_suffix(".json.tmp")
+    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    temporary.replace(CONFIG_PATH)
+    return payload
+
+
+def write_active_symbols(symbols: list[str]) -> dict[str, Any]:
+    normalized = list(dict.fromkeys(normalize_symbol(symbol) for symbol in symbols))
+    if not normalized:
+        raise ValueError("at least one symbol is required")
+    payload = load_config()
+    payload["active_symbol"] = normalized[0]
+    payload["active_symbols"] = normalized
     payload["minute_intervals"] = list(payload["minute_intervals"])
     temporary = CONFIG_PATH.with_suffix(".json.tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")

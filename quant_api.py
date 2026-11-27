@@ -13,7 +13,7 @@ import pandas as pd
 
 from quant_storage import load_candles, save_execution_event
 from strategy_57pct import BASELINE, strategy_signal, walk_forward_optimize, walk_forward_replay, stats
-from trading_config import active_symbol, normalize_symbol, strategy_path
+from trading_config import active_symbols, normalize_symbol, strategy_path
 
 
 class StrategyAPI:
@@ -86,8 +86,8 @@ LIVE_STRATEGY_PATH = strategy_path()
 def write_live_strategy(symbol: str, interval: int, params: dict[str, Any], run_id: str | None = None) -> dict[str, Any]:
     """Publish a strategy only for the configured SIMULATE paper symbol."""
     symbol = normalize_symbol(symbol)
-    if symbol != active_symbol() or int(interval) not in range(1, 11):
-        raise ValueError("paper strategy requires the active symbol and a 1–10 minute interval")
+    if symbol not in active_symbols() or int(interval) not in range(1, 11):
+        raise ValueError("paper strategy requires a configured portfolio symbol and a 1–10 minute interval")
     payload = {
         "symbol": symbol,
         "interval": int(interval),

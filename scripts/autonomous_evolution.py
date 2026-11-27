@@ -19,8 +19,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from trading_config import active_symbol, research_dir, strategy_path
-SYMBOL = active_symbol()
+from trading_config import active_symbol, active_symbols, normalize_symbol, research_dir, strategy_path
+SYMBOL = normalize_symbol(os.environ.get("TRADING_SYMBOL", active_symbol()))
+if SYMBOL not in active_symbols():
+    raise RuntimeError(f"TRADING_SYMBOL must belong to configured portfolio {active_symbols()}")
 MCP = ROOT / "ai_gateway" / "ai" / "mcp_server.py"
 RUNS = research_dir(SYMBOL) / "evolution"
 # The AI mutation worker may change strategy implementation only. Promotion

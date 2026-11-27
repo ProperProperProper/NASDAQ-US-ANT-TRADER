@@ -22,7 +22,7 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from trading_config import active_symbol, normalize_symbol, promotion_path, research_dir, strategy_path
+from trading_config import active_symbol, active_symbols, normalize_symbol, promotion_path, research_dir, strategy_path
 ACTIVE_SYMBOL = active_symbol()
 RANDOM_HISTORY = research_dir(ACTIVE_SYMBOL) / "randomized_param_history.json"
 MAX_RESEARCH_SESSIONS = 5
@@ -191,10 +191,10 @@ def ai_candidates(interval: int) -> list[dict]:
         "bottom_breakdown/lower_half_breakdown. Also propose trailing_activation_pct "
         "and trailing_stop_pct as decimals in 0.0..0.04; use both zero to disable. No prose."
     )
-    # Structured candidate extraction needs a stronger instruction-following
-    # backend than the tiny local model; keep ordinary chat on auto routing,
-    # but use the verified NVIDIA free endpoint for this bounded JSON task.
-    mcp_request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "gateway_chat", "arguments": {"prompt": prompt, "provider": "local", "max_tokens": 128}}}
+    # Prefer native local inference, while allowing the gateway to fall back to
+    # the configured hosted backend when the resource governor pauses MLX
+    # during a four-core research batch.
+    mcp_request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "gateway_chat", "arguments": {"prompt": prompt, "provider": "auto", "max_tokens": 256}}}
     completed = subprocess.run(
         [sys.executable, str(ROOT / "ai_gateway/ai/mcp_server.py")],
         input=json.dumps(mcp_request) + "\n", capture_output=True, text=True, timeout=90, check=False,
@@ -296,6 +296,7 @@ def parse_intervals(value: str | None) -> list[int]:
 
 
 def run_main() -> int:
+    global ACTIVE_SYMBOL, RANDOM_HISTORY, PENDING_PROMOTION_PATH
     ap = argparse.ArgumentParser()
     ap.add_argument("--symbol", default=ACTIVE_SYMBOL, help="configured active US symbol")
     ap.add_argument("--start", default="2026-01-01")
@@ -309,8 +310,13 @@ def run_main() -> int:
     ap.add_argument("--run-dir", type=Path, default=research_dir(ACTIVE_SYMBOL) / "runs")
     args = ap.parse_args()
     args.symbol = normalize_symbol(args.symbol)
-    if args.symbol != active_symbol():
-        ap.error(f"symbol must match configured active symbol {active_symbol()}")
+    if args.symbol not in active_symbols():
+        ap.error(f"symbol must belong to configured portfolio {active_symbols()}")
+    ACTIVE_SYMBOL = args.symbol
+    RANDOM_HISTORY = research_dir(args.symbol) / "randomized_param_history.json"
+    PENDING_PROMOTION_PATH = promotion_path(args.symbol)
+    if args.run_dir == research_dir(active_symbol()) / "runs":
+        args.run_dir = research_dir(args.symbol) / "runs"
     intervals = parse_intervals(args.intervals)
     try:
         ensure_one_minute_cache(args.symbol, args.start, args.end, args.refresh_1m)

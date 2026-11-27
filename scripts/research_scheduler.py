@@ -2,8 +2,10 @@
 """Run serialized five-session research sweeps on fresh or due cached data."""
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import json
+import os
 import sqlite3
 import subprocess
 import sys
@@ -12,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from us_market_calendar import session_phase as market_session_phase
-from trading_config import active_symbol, research_dir, strategy_path
+from trading_config import active_symbol, active_symbols, normalize_symbol, research_dir, strategy_path
 
 ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "quant_dashboard.sqlite3"
@@ -66,6 +68,14 @@ def rerun_due(previous: dict, session: str, now: dt.datetime) -> bool:
 
 
 def main() -> int:
+    global SYMBOL, STATE
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--symbol", default=active_symbol())
+    args = parser.parse_args()
+    SYMBOL = normalize_symbol(args.symbol)
+    if SYMBOL not in active_symbols():
+        parser.error(f"symbol must belong to configured portfolio {active_symbols()}")
+    STATE = research_dir(SYMBOL) / "scheduler_state.json"
     session = latest_session()
     if not session:
         print(json.dumps({"state": "SKIPPED", "reason": "no 1m cache"}), flush=True)
@@ -97,8 +107,12 @@ def main() -> int:
     payload = {"state": "COMPLETED" if result.returncode == 0 else "FAILED", "session": session, "phase": phase, "exit_code": result.returncode, "finished_at": dt.datetime.now(dt.timezone.utc).isoformat()}
     if result.returncode == 0:
         payload["last_completed_session"] = session
-        evolution = subprocess.run(["/usr/bin/nice", "-n", "10", sys.executable, str(ROOT / "scripts" / "autonomous_evolution.py")], cwd=ROOT, text=True, capture_output=True, check=False)
-        payload["autonomous_evolution"] = evolution.stdout.strip() or evolution.stderr.strip()
+        if len(active_symbols()) == 1:
+            environment = dict(os.environ, TRADING_SYMBOL=SYMBOL)
+            evolution = subprocess.run(["/usr/bin/nice", "-n", "10", sys.executable, str(ROOT / "scripts" / "autonomous_evolution.py")], cwd=ROOT, env=environment, text=True, capture_output=True, check=False)
+            payload["autonomous_evolution"] = evolution.stdout.strip() or evolution.stderr.strip()
+        else:
+            payload["autonomous_evolution"] = "disabled for multi-symbol portfolio; shared code must not be rewritten from one symbol's results"
     STATE.write_text(json.dumps(payload, indent=2) + "\n")
     return result.returncode
 

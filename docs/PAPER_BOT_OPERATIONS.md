@@ -22,16 +22,16 @@ MLX Sentinel. Moomoo OpenD remains a separate broker application. The Moomoo
 and MLX integrations remain Python workers inside the Rust-supervised runtime.
 Only the engine's local launch plist supplies `PAPER_ACCOUNT_ID`.
 
-Change the single active symbol with:
+Change the concurrent portfolio with:
 
 ```bash
-ai_gateway/target/release/trading_engine symbol-set US.AAPL
+ai_gateway/target/release/trading_engine portfolio-set US.AAPL,US.ADP,US.ALRM,US.ADMA
 ```
 
-The engine stops the paper worker and refuses the change unless the current and
-requested symbols are flat with no pending orders on the verified standard
-SIMULATE account. Strategies, runtime state, pending promotions, and research
-artifacts are isolated by symbol.
+The engine stops the paper and research workers and refuses the change unless
+all current and requested symbols are flat with no pending orders on the
+verified standard SIMULATE account. Strategies, runtime state, pending
+promotions, and research artifacts are isolated by symbol.
 
 Research runs in a separate low-priority process. Eligible winners are
 automatically queued. The paper bot checks its SIMULATE broker position and

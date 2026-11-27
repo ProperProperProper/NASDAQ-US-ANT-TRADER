@@ -25,7 +25,7 @@ LAB_ROOT = ROOT
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(LAB_ROOT))
 sys.path.insert(0, str(LAB_ROOT / "scripts"))
-from trading_config import active_symbol, normalize_symbol, research_dir, strategy_path
+from trading_config import active_symbol, active_symbols, normalize_symbol, research_dir, strategy_path
 ACTIVE_SYMBOL = active_symbol()
 
 
@@ -187,8 +187,8 @@ def main() -> int:
     ap.add_argument("--continuous", action="store_true")
     args = ap.parse_args()
     args.symbol = normalize_symbol(args.symbol)
-    if args.symbol != active_symbol():
-        ap.error(f"symbol must match configured active symbol {active_symbol()}")
+    if args.symbol not in active_symbols():
+        ap.error(f"symbol must belong to configured portfolio {active_symbols()}")
     if args.run_dir is None:
         args.run_dir = research_dir(args.symbol) / "legacy-lab"
     providers = [x.strip() for x in args.providers.split(",") if x.strip()]

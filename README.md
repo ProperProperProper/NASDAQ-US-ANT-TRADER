@@ -52,13 +52,13 @@ The 2 bps figure is an execution assumption, not a guarantee. Results depend on 
 
 ## Files
 
-- `competition_bot.py` — active-symbol paper-trading process.
+- `competition_bot.py` — concurrent portfolio paper-trading process.
 - `ai_gateway/src/bin/trading_engine.rs` — Rust supervisor for the paper bot, research, gateway, and MLX workers.
 - `market_data.py` — local Moomoo 1-minute ingestion used by native research.
 - `DesktopApp.swift` — native macOS AppKit GUI source for runtime status, paper-bot controls, and interval research.
 - `ai_gateway/` — bundled Rust Multi-Model AI Gateway and its MCP bridge; the strategy lab no longer depends on a sibling project.
 - `docs/AI_ENGINEERING_CONTROLS.md` — provider-neutral AI safety, tool, prompt, evaluation, and release controls.
-- `scripts/app_minute_interval_sweep.py` — active-symbol 1m-through-10m research sweep built from the single 1m cache and limited to the latest 5 sessions.
+- `scripts/app_minute_interval_sweep.py` — per-symbol 1m-through-10m research sweep built from each 1m cache and limited to the latest 5 sessions.
 - `ops/start_ai_gateway.sh` — starts the bundled gateway on `127.0.0.1:8788`.
 - `quant_storage.py` — SQLite candle, run, trade, and event storage.
 - `strategy_57pct.py` — strategy and walk-forward evaluation logic.
@@ -92,17 +92,17 @@ Run a paper-only check (omit `--live-paper` for signal-only mode):
 PAPER_ACCOUNT_ID='<local SIMULATE account ID>' python3 competition_bot.py US.ANT --bar-interval 2
 ```
 
-The active symbol is stored in `trading_system.json`. Change it through the
-guarded engine command:
+The active portfolio is stored in `trading_system.json`. Change it through the
+guarded engine command with a comma-separated symbol list:
 
 ```sh
-ai_gateway/target/release/trading_engine symbol-set US.AAPL
+ai_gateway/target/release/trading_engine portfolio-set US.AAPL,US.ADP,US.ALRM,US.ADMA
 ```
 
-The engine stops the paper worker, verifies the standard SIMULATE account,
-validates the Moomoo quote, and restarts with isolated symbol state. It refuses
-the change when the current or requested symbol has a position or active order.
-Each symbol has separate strategy, state, promotion, and research directories.
+The engine stops the paper and research workers, verifies the standard SIMULATE
+account, validates every Moomoo quote, and restarts with isolated per-symbol
+state. It refuses the change when a current or requested symbol has a position
+or active order. Each symbol has separate strategy, promotion, and research data.
 
 The native app also accepts a comma-separated list such as `US.ANT,US.AAPL`
 for research. **Test symbols 1–10m** fetches each symbol's 1-minute candles,
@@ -116,7 +116,7 @@ troubleshooting.
 
 ## Research engine
 
-Research fetches only the configured active symbol's 1-minute candles from Moomoo OpenD with
+Research fetches each configured portfolio symbol's 1-minute candles from Moomoo OpenD with
 `request_history_kline`, caches the source candles in `quant_dashboard.sqlite3`,
 and aggregates complete regular-session bars locally for each requested interval
 from 1m through 10m. The interval sweep uses up to the latest 5 completed US

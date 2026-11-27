@@ -1,5 +1,6 @@
 {
-  "active_symbol": "US.ANT",
+  "active_symbol": "US.AAPL",
+  "active_symbols": ["US.AAPL", "US.ADP", "US.ALRM", "US.ADMA"],
   "market": "US",
   "minute_intervals": [
     1,
@@ -15,5 +16,6 @@
   ],
   "mode": "SIMULATE",
   "paper_account_env": "PAPER_ACCOUNT_ID",
+  "portfolio_allocation": 0.95,
   "research_workers": 4
 }

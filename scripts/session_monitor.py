@@ -18,10 +18,10 @@ from moomoo import OpenQuoteContext, OpenSecTradeContext, RET_OK, TrdEnv, TrdMar
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from us_market_calendar import session_phase
-from trading_config import active_symbol, state_path
+from trading_config import active_symbols
 ET = ZoneInfo("America/New_York")
 ACCOUNT_PLIST = Path.home() / "Library/LaunchAgents/com.local.trading-engine.plist"
-SYMBOL = active_symbol()
+SYMBOLS = active_symbols()
 TERMINAL = {"FILLED_ALL", "CANCELLED_ALL", "CANCELLED_PART", "FAILED", "DELETED", "CANCELLED"}
 
 
@@ -57,15 +57,15 @@ def check() -> dict:
         row = accounts[accounts.acc_id.astype(str) == str(acct)] if ret == RET_OK else accounts.iloc[0:0]
         env = str(row.iloc[0].trd_env) if not row.empty else "MISSING"
         ret, positions = trade.position_list_query(trd_env=TrdEnv.SIMULATE, acc_id=acct)
-        held = positions[(positions.code.astype(str) == SYMBOL) & (positions.qty.astype(float) != 0)] if ret == RET_OK and not positions.empty else positions.iloc[0:0]
+        held = positions[positions.code.astype(str).isin(SYMBOLS) & (positions.qty.astype(float) != 0)] if ret == RET_OK and not positions.empty else positions.iloc[0:0]
         ret, orders = trade.order_list_query(trd_env=TrdEnv.SIMULATE, acc_id=acct)
-        ant_orders = orders[orders.code.astype(str) == SYMBOL] if ret == RET_OK and not orders.empty else orders.iloc[0:0]
-        active = ant_orders[~ant_orders.order_status.astype(str).str.upper().isin(TERMINAL)] if not ant_orders.empty else ant_orders
-        ret, snapshot = quote.get_market_snapshot([SYMBOL])
-        quote_row = snapshot.iloc[0] if ret == RET_OK and not snapshot.empty else None
+        portfolio_orders = orders[orders.code.astype(str).isin(SYMBOLS)] if ret == RET_OK and not orders.empty else orders.iloc[0:0]
+        active = portfolio_orders[~portfolio_orders.order_status.astype(str).str.upper().isin(TERMINAL)] if not portfolio_orders.empty else portfolio_orders
+        ret, snapshot = quote.get_market_snapshot(list(SYMBOLS))
+        quotes = snapshot.set_index("code") if ret == RET_OK and not snapshot.empty and "code" in snapshot else snapshot.iloc[0:0]
         with sqlite3.connect(ROOT / "quant_dashboard.sqlite3") as db:
-            cache_end = db.execute("select max(time_key) from candles where symbol=? and interval_minutes=1", (SYMBOL,)).fetchone()[0]
-        bot_state = state_path(SYMBOL)
+            cache_ends = {symbol: db.execute("select max(time_key) from candles where symbol=? and interval_minutes=1", (symbol,)).fetchone()[0] for symbol in SYMBOLS}
+        bot_state = ROOT / "state" / "portfolio" / "bot.json"
         state = json.loads(bot_state.read_text()) if bot_state.exists() else {}
         return {
             "time": dt.datetime.now(ET).isoformat(timespec="seconds"),
@@ -73,15 +73,15 @@ def check() -> dict:
             "account": acct, "environment": env,
             "bot_count": process_count("competition_bot.py"),
             "research_count": process_count("continuous_research_scheduler.py"),
-            "qty": int(float(held.iloc[0].qty)) if not held.empty else 0,
-            "avg": float(held.iloc[0].cost_price) if not held.empty else 0.0,
-            "position_side": str(held.iloc[0].position_side) if not held.empty and "position_side" in held.columns else "FLAT",
+            "symbols": list(SYMBOLS),
+            "qty": int(held.qty.astype(float).sum()) if not held.empty else 0,
+            "positions": held[[column for column in ("code", "qty", "cost_price", "position_side") if column in held]].to_dict("records") if not held.empty else [],
+            "position_side": "PORTFOLIO" if not held.empty else "FLAT",
             "active_orders": len(active),
-            "bid": float(quote_row.bid_price) if quote_row is not None else None,
-            "ask": float(quote_row.ask_price) if quote_row is not None else None,
-            "cache_end": str(cache_end),
+            "quotes": {symbol: {"bid": float(quotes.loc[symbol].bid_price), "ask": float(quotes.loc[symbol].ask_price)} for symbol in SYMBOLS if symbol in quotes.index},
+            "cache_end": {symbol: str(cache_ends[symbol]) for symbol in SYMBOLS},
             "state_pending": state.get("pending", {}),
-            "state_interval": state.get("strategy_interval"),
+            "state_interval": state.get("strategy_intervals", {}),
         }
     finally:
         quote.close(); trade.close()
@@ -95,7 +95,7 @@ def main() -> int:
                 value["environment"] != "SIMULATE"
                 or value["bot_count"] != 1
                 or value["research_count"] > 1
-                or value["qty"] < 0
+                or any(float(item.get("qty", 0)) < 0 for item in value["positions"])
             )
             value["state"] = "FAULT" if fault else "HEALTHY"
             print(json.dumps(value, sort_keys=True), flush=True)
@@ -115,7 +115,7 @@ def main() -> int:
                 value["environment"] != "SIMULATE"
                 or value["bot_count"] != 1
                 or value["research_count"] > 1
-                or value["qty"] < 0
+                or any(float(item.get("qty", 0)) < 0 for item in value["positions"])
             )
             value["state"] = "FAULT" if fault else "HEALTHY"
             compact = json.dumps(value, sort_keys=True, separators=(",", ":"))

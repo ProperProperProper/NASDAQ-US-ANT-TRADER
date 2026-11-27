@@ -46,19 +46,20 @@ from quant_storage import save_candles, save_execution_event
 from minute_bars import MINUTE_INTERVALS, aggregate_us_session
 from quant_api import audit_api, risk_api, strategy_api
 from strategy_57pct import BASELINE
-from trading_config import active_symbol, normalize_symbol, promotion_path, state_path, strategy_path
+from trading_config import active_symbols, normalize_symbol, promotion_path, strategy_path
 from us_market_calendar import session_close, session_exit_time
 
 
-POSITION_FRACTION = 0.95
-MAX_OPEN_POSITIONS = 1
+ACTIVE_SYMBOLS = active_symbols()
+POSITION_FRACTION = 0.95 / len(ACTIVE_SYMBOLS)
+MAX_OPEN_POSITIONS = len(ACTIVE_SYMBOLS)
 POLL_SECONDS = 30
 MAX_GRID_LOOKBACK = 240
 MIN_BARS = MAX_GRID_LOOKBACK + 5
 OPEN_D_SOCKET_TIMEOUT_SECONDS = 20
+PARENT_ENGINE_PID = int(os.environ.get("PARENT_ENGINE_PID", "0"))
 DEFAULT_BAR_INTERVAL = 10
 STANDARD_PAPER_ACCOUNT_ID = int(os.environ.get("PAPER_ACCOUNT_ID", "0"))
-ACTIVE_SYMBOL = active_symbol()
 BAR_INTERVAL_TYPES = {minutes: KLType.K_1M for minutes in MINUTE_INTERVALS}
 ET = ZoneInfo("America/New_York")
 LOG_PATH = Path(__file__).with_name("competition_bot.log")
@@ -104,23 +105,21 @@ class CompetitionBot:
         if not STANDARD_PAPER_ACCOUNT_ID or acc_id != STANDARD_PAPER_ACCOUNT_ID:
             raise ValueError("only the locally configured standard SIMULATE account is permitted")
         normalized_symbols = [code(s) for s in symbols]
-        if normalized_symbols != [ACTIVE_SYMBOL]:
-            raise ValueError(f"only {ACTIVE_SYMBOL} is permitted by the active paper bot")
+        if tuple(normalized_symbols) != ACTIVE_SYMBOLS:
+            raise ValueError(f"symbols must match configured portfolio {list(ACTIVE_SYMBOLS)}")
         self.symbols = normalized_symbols
-        self.state_path = state_path(ACTIVE_SYMBOL)
-        self.live_strategy_path = strategy_path(ACTIVE_SYMBOL)
-        self.pending_promotion_path = promotion_path(ACTIVE_SYMBOL)
+        self.state_path = Path(__file__).with_name("state") / "portfolio" / "bot.json"
+        self.state_path.parent.mkdir(parents=True, exist_ok=True)
         self.acc_index = acc_index
         self.acc_id = acc_id
         self.live_paper = live_paper
         self.interval = interval
         self.bar_interval = bar_interval
+        self.bar_intervals = {symbol: bar_interval for symbol in self.symbols}
         self.running = True
         self.last_error: str | None = None
         self.state = self._load_state()
-        self.peak_price = scalar(self.state.get("peak_price"), 0.0)
-        self.break_even_armed = bool(self.state.get("break_even_armed", False))
-        self.profit_lock_armed = bool(self.state.get("profit_lock_armed", False))
+        self.peak_prices = {symbol: scalar(value) for symbol, value in self.state.get("peak_prices", {}).items()}
         self.quote = OpenQuoteContext(host="127.0.0.1", port=11111)
         self.trade = OpenSecTradeContext(
             filter_trdmarket=TrdMarket.US,
@@ -139,10 +138,8 @@ class CompetitionBot:
         return state
 
     def _save_state(self) -> None:
-        self.state["peak_price"] = self.peak_price
-        self.state["break_even_armed"] = self.break_even_armed
-        self.state["profit_lock_armed"] = self.profit_lock_armed
-        self.state["bar_interval"] = self.bar_interval
+        self.state["peak_prices"] = self.peak_prices
+        self.state["bar_intervals"] = self.bar_intervals
         temporary = self.state_path.with_name(self.state_path.name + ".tmp")
         temporary.write_text(json.dumps(self.state, indent=2) + "\n")
         temporary.replace(self.state_path)
@@ -151,7 +148,7 @@ class CompetitionBot:
         """Reload the published paper interval and parameters on every cycle."""
         self._apply_pending_promotion(symbol)
         try:
-            payload = json.loads(self.live_strategy_path.read_text())
+            payload = json.loads(strategy_path(symbol).read_text())
             interval = int(payload.get("interval"))
             if (str(payload.get("symbol", "")).upper() == symbol
                     and interval in BAR_INTERVAL_TYPES
@@ -160,14 +157,16 @@ class CompetitionBot:
                 return interval, {**BASELINE, **payload["params"]}
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             pass
-        return self.bar_interval, dict(BASELINE)
+        return self.bar_intervals[symbol], dict(BASELINE)
 
     def _apply_pending_promotion(self, symbol: str) -> None:
         """Apply a deferred paper promotion only after the broker is flat."""
-        if not self.pending_promotion_path.exists():
+        pending_path = promotion_path(symbol)
+        live_path = strategy_path(symbol)
+        if not pending_path.exists():
             return
         try:
-            payload = json.loads(self.pending_promotion_path.read_text())
+            payload = json.loads(pending_path.read_text())
             if str(payload.get("symbol", "")).upper() != symbol:
                 return
             if payload.get("mode") != "SIMULATE" or int(payload.get("interval", 0)) not in BAR_INTERVAL_TYPES:
@@ -175,10 +174,10 @@ class CompetitionBot:
             qty, _ = self.position(symbol)
             if qty != 0 or self.pending_order_side(symbol):
                 return
-            temporary = self.live_strategy_path.with_name(self.live_strategy_path.name + ".tmp")
+            temporary = live_path.with_name(live_path.name + ".tmp")
             temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-            temporary.replace(self.live_strategy_path)
-            self.pending_promotion_path.unlink()
+            temporary.replace(live_path)
+            pending_path.unlink()
             logging.info("applied deferred paper promotion symbol=%s interval=%sm", symbol, payload.get("interval"))
             save_execution_event("PAPER_PROMOTION_APPLIED", symbol, {"interval": payload.get("interval"), "run_id": payload.get("run_id"), "deferred": True, "paper": True})
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
@@ -297,11 +296,11 @@ class CompetitionBot:
 
     def record_position_mark(self, symbol: str, qty: float, avg: float) -> float | None:
         if qty <= 0 or avg <= 0:
-            self.state.pop("position_mark", None)
+            self.state.setdefault("position_marks", {}).pop(symbol, None)
             self._save_state()
             return None
         mark = self.market_bid(symbol)
-        self.state["position_mark"] = {
+        self.state.setdefault("position_marks", {})[symbol] = {
             "symbol": symbol,
             "qty": int(qty),
             "avg_price": avg,
@@ -316,16 +315,18 @@ class CompetitionBot:
         """Fail closed when an external sell creates an unsupported short."""
         logging.error("short position detected; blocking strategy activity symbol=%s qty=%s", symbol, qty)
         audit_api.event("SHORT_POSITION_BLOCKED", symbol, {"qty": qty, "avg": avg, "paper": True})
-        self.state["position_fault"] = {"symbol": symbol, "qty": qty, "reason": "SHORT_POSITION"}
+        self.state.setdefault("position_faults", {})[symbol] = {"qty": qty, "reason": "SHORT_POSITION"}
         self._save_state()
 
-    def risk_exit_reason(self, price: float, qty: float, avg: float, params: dict[str, Any]) -> str | None:
+    def risk_exit_reason(self, symbol: str, price: float, qty: float, avg: float, params: dict[str, Any]) -> str | None:
         """Evaluate executable intrabar risk exits without consuming a signal bar."""
         if qty <= 0 or avg <= 0 or price <= 0:
             return None
-        if self.peak_price <= 0:
-            self.peak_price = max(avg, price)
-        self.peak_price = max(self.peak_price, price)
+        peak = self.peak_prices.get(symbol, 0.0)
+        if peak <= 0:
+            peak = max(avg, price)
+        peak = max(peak, price)
+        self.peak_prices[symbol] = peak
         take_profit_pct = max(0.0, scalar(params.get("take_profit_pct"), 0.0274))
         stop_loss_pct = max(0.0, scalar(params.get("stop_loss_pct"), 0.1324))
         trailing_activation_pct = max(0.0, scalar(params.get("trailing_activation_pct"), 0.0))
@@ -337,13 +338,13 @@ class CompetitionBot:
         trailing_armed = (
             trailing_activation_pct > 0
             and trailing_stop_pct > 0
-            and self.peak_price >= avg * (1.0 + trailing_activation_pct)
+            and peak >= avg * (1.0 + trailing_activation_pct)
         )
-        if trailing_armed and price <= self.peak_price * (1.0 - trailing_stop_pct):
+        if trailing_armed and price <= peak * (1.0 - trailing_stop_pct):
             return "TRAILING_STOP"
         return None
 
-    def candles(self, symbol: str) -> pd.DataFrame:
+    def candles(self, symbol: str, bar_interval: int) -> pd.DataFrame:
         now = datetime.now()
         start = (now - timedelta(days=14)).strftime("%Y-%m-%d")
         end = (now + timedelta(days=1)).strftime("%Y-%m-%d")
@@ -371,10 +372,10 @@ class CompetitionBot:
         minute_frame["time_key"] = pd.to_datetime(minute_frame["time_key"])
         minute_frame = minute_frame.sort_values("time_key").drop_duplicates("time_key").set_index("time_key")
         save_candles(minute_frame, symbol, 1)
-        bars = aggregate_us_session(minute_frame, self.bar_interval, include_incomplete=True)
+        bars = aggregate_us_session(minute_frame, bar_interval, include_incomplete=True)
         if len(bars) > MIN_BARS + 20:
             bars = bars.tail(MIN_BARS + 20)
-        save_candles(bars, symbol, self.bar_interval, source="local_1m_aggregation")
+        save_candles(bars, symbol, bar_interval, source="local_1m_aggregation")
         return bars.reset_index(names="time_key")
 
     def submit(self, symbol: str, side: Any, qty: int, reason: str) -> None:
@@ -403,15 +404,17 @@ class CompetitionBot:
                 logging.info("poll begin symbol=%s", symbol)
                 logging.info("requesting candles symbol=%s", symbol)
                 strategy_interval, params = self._strategy_config(symbol)
-                if strategy_interval != self.bar_interval:
-                    logging.info("adopting promoted paper interval symbol=%s old=%dm new=%dm", symbol, self.bar_interval, strategy_interval)
-                    self.bar_interval = strategy_interval
+                if strategy_interval != self.bar_intervals[symbol]:
+                    logging.info("adopting promoted paper interval symbol=%s old=%dm new=%dm", symbol, self.bar_intervals[symbol], strategy_interval)
+                    self.bar_intervals[symbol] = strategy_interval
                     save_execution_event("STRATEGY_INTERVAL_ADOPTED", symbol, {"interval": strategy_interval, "params": params, "paper": True})
-                if self.state.get("strategy_interval") != strategy_interval or self.state.get("strategy_params") != params:
-                    self.state["strategy_interval"] = strategy_interval
-                    self.state["strategy_params"] = params
+                strategy_intervals = self.state.setdefault("strategy_intervals", {})
+                strategy_params = self.state.setdefault("strategy_params", {})
+                if strategy_intervals.get(symbol) != strategy_interval or strategy_params.get(symbol) != params:
+                    strategy_intervals[symbol] = strategy_interval
+                    strategy_params[symbol] = params
                     self._save_state()
-                candles = self.candles(symbol)
+                candles = self.candles(symbol, strategy_interval)
                 if candles.empty or "time_key" not in candles.columns:
                     raise RuntimeError(f"no usable candles returned for {symbol}")
                 source_bar = str(candles["time_key"].iloc[-1])
@@ -434,7 +437,7 @@ class CompetitionBot:
                             self.mark_session_exit(symbol)
                             self.submit(symbol, TrdSide.SELL, int(qty), "SESSION_EXIT_30M_BEFORE_CLOSE")
                             self.state["pending"][symbol] = "SELL"
-                            self.peak_price = 0.0
+                            self.peak_prices[symbol] = 0.0
                             self._save_state()
                             continue
                     if pending:
@@ -448,13 +451,11 @@ class CompetitionBot:
                         self.block_short_position(symbol, qty, avg)
                         continue
                     mark = self.record_position_mark(symbol, qty, avg)
-                    risk_reason = self.risk_exit_reason(mark or 0.0, qty, avg, params)
+                    risk_reason = self.risk_exit_reason(symbol, mark or 0.0, qty, avg, params)
                     if risk_reason and not pending:
                         self.submit(symbol, TrdSide.SELL, int(qty), risk_reason)
                         self.state["pending"][symbol] = "SELL"
-                        self.peak_price = 0.0
-                        self.break_even_armed = False
-                        self.profit_lock_armed = False
+                        self.peak_prices[symbol] = 0.0
                         self._save_state()
                         continue
                     logging.info("no new source candle symbol=%s bar=%s", symbol, source_bar)
@@ -477,7 +478,7 @@ class CompetitionBot:
                 # permanent state. Clear it once the broker confirms that the
                 # symbol is flat or long, so restarts do not retain stale risk
                 # information from a manually closed position.
-                if self.state.pop("position_fault", None) is not None:
+                if self.state.setdefault("position_faults", {}).pop(symbol, None) is not None:
                     logging.info("cleared stale position fault symbol=%s qty=%s", symbol, qty)
                     save_execution_event("POSITION_FAULT_CLEARED", symbol, {"qty": qty, "avg": avg, "paper": True})
                     self._save_state()
@@ -505,10 +506,10 @@ class CompetitionBot:
                         continue
 
                 if qty > 0:
-                    if self.peak_price <= 0:
-                        self.peak_price = max(avg, price)
-                    self.peak_price = max(self.peak_price, price)
-                    risk_reason = self.risk_exit_reason(price, qty, avg, params)
+                    if self.peak_prices.get(symbol, 0.0) <= 0:
+                        self.peak_prices[symbol] = max(avg, price)
+                    self.peak_prices[symbol] = max(self.peak_prices[symbol], price)
+                    risk_reason = self.risk_exit_reason(symbol, price, qty, avg, params)
                     session_exit = self.session_exit_due() or bool(signal_data.get("session_exit", False))
                     if risk_reason or session_exit or exit_signal:
                         reason = risk_reason or ("SESSION_EXIT_30M_BEFORE_CLOSE" if session_exit else "GRID_EXIT")
@@ -516,9 +517,7 @@ class CompetitionBot:
                             self.mark_session_exit(symbol)
                         self.submit(symbol, TrdSide.SELL, int(qty), reason)
                         self.state["pending"][symbol] = "SELL"
-                        self.peak_price = 0.0
-                        self.break_even_armed = False
-                        self.profit_lock_armed = False
+                        self.peak_prices[symbol] = 0.0
                     self.state["last_bar"][symbol] = signal_data["bar"]
                     self.state["last_source_bar"][symbol] = source_bar
                     self._save_state()
@@ -543,9 +542,7 @@ class CompetitionBot:
                         if decision.allowed:
                             self.submit(symbol, TrdSide.BUY, decision.quantity, "ENTRY")
                             self.state["pending"][symbol] = "BUY"
-                            self.peak_price = price
-                            self.break_even_armed = False
-                            self.profit_lock_armed = False
+                            self.peak_prices[symbol] = price
                     self.state["last_bar"][symbol] = signal_data["bar"]
                     self.state["last_source_bar"][symbol] = source_bar
                     self._save_state()
@@ -564,6 +561,9 @@ class CompetitionBot:
         self.verify_sim_account()
         logging.info("starting %s symbols=%s account_id=%s bar_interval=%dm poll_seconds=%d", "LIVE_PAPER" if self.live_paper else "DRY_RUN", self.symbols, self.acc_id, self.bar_interval, self.interval)
         while self.running:
+            if PARENT_ENGINE_PID and os.getppid() != PARENT_ENGINE_PID:
+                logging.error("parent engine disappeared; stopping paper worker")
+                break
             self.tick()
             for _ in range(self.interval):
                 if not self.running:
@@ -587,7 +587,7 @@ def list_accounts() -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("symbols", nargs="*", help=f"configured active symbol only: {ACTIVE_SYMBOL}")
+    parser.add_argument("symbols", nargs="*", help=f"configured portfolio: {', '.join(ACTIVE_SYMBOLS)}")
     parser.add_argument("--acc-index", type=int, default=0, help="SIMULATE US account index from --list-accounts")
     parser.add_argument("--acc-id", type=int, default=STANDARD_PAPER_ACCOUNT_ID, help="SIMULATE account ID (must match local configuration)")
     parser.add_argument("--interval", type=int, default=POLL_SECONDS)

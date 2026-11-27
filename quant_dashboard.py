@@ -39,7 +39,7 @@ from market_data import fetch_moomoo_candles as fetch_source_candles
 from minute_bars import MINUTE_INTERVALS, aggregate_us_session
 from quant_storage import load_candles, save_backtest, save_candles
 from quant_api import data_api, risk_json, strategy_api, write_live_strategy
-from trading_config import active_symbol, normalize_symbol, state_path, strategy_path
+from trading_config import active_symbol, active_symbols, normalize_symbol, strategy_path
 
 
 ROOT = Path(__file__).resolve().parent
@@ -61,9 +61,10 @@ def configured_paper_account() -> int:
 
 
 PAPER_ACCOUNT_ID = configured_paper_account()
-BOT_STATE_PATH = state_path()
+BOT_STATE_PATH = ROOT / "state" / "portfolio" / "bot.json"
 INSTANCE_LOCK_PATH = Path(__file__).with_name("quant_dashboard.lock")
 SYMBOL = active_symbol()
+SYMBOLS = active_symbols()
 INTERVAL_MINUTES = 10
 backtest_lock = threading.Lock()
 backtest_job: dict[str, Any] = {"state": "idle", "done": 0, "total": 0, "message": "Idle"}
@@ -103,18 +104,20 @@ def fetch_moomoo_candles(symbol: str, start: str, end: str, interval_minutes: in
 
 
 def execution_status() -> dict[str, Any]:
-    position_mark = {}
-    persisted_interval = None
+    position_marks = {}
+    persisted_intervals = {}
     try:
         bot_state = json.loads(BOT_STATE_PATH.read_text())
-        position_mark = bot_state.get("position_mark", {})
-        persisted_interval = bot_state.get("strategy_interval")
+        position_marks = bot_state.get("position_marks", {})
+        persisted_intervals = bot_state.get("strategy_intervals", {})
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         pass
-    selected_interval = int(persisted_interval) if persisted_interval in BAR_INTERVAL_TYPES else DEFAULT_BAR_INTERVAL
+    primary_interval = persisted_intervals.get(SYMBOL)
+    selected_interval = int(primary_interval) if primary_interval in BAR_INTERVAL_TYPES else DEFAULT_BAR_INTERVAL
     status = {"active": False, "symbols": [], "account_index": None,
               "account_id": PAPER_ACCOUNT_ID or None, "mode": "STOPPED",
-              "bar_interval": selected_interval, "position": position_mark}
+              "bar_interval": selected_interval, "bar_intervals": persisted_intervals,
+              "positions": position_marks}
     try:
         result = subprocess.run(
             [str(ENGINE_BINARY), "status"], capture_output=True, text=True, timeout=2, check=False,
@@ -122,17 +125,17 @@ def execution_status() -> dict[str, Any]:
         paper = next((line for line in result.stdout.splitlines() if line.startswith("paper=")), "")
         if result.returncode == 0 and paper.startswith("paper=enabled") and "pid=0" not in paper:
             pid = paper.rsplit("pid=", 1)[-1]
-            bar_interval = int(persisted_interval) if persisted_interval in BAR_INTERVAL_TYPES else DEFAULT_BAR_INTERVAL
             return {
                 "active": True,
-                "symbols": [SYMBOL],
+                "symbols": list(SYMBOLS),
                 "account_index": None,
                 "account_id": PAPER_ACCOUNT_ID,
                 "mode": "SIMULATE",
                 "source": "rust_engine",
                 "pid": int(pid) if pid and pid.isdigit() else None,
-                "bar_interval": bar_interval,
-                "position": position_mark,
+                "bar_interval": selected_interval,
+                "bar_intervals": persisted_intervals,
+                "positions": position_marks,
             }
     except (OSError, subprocess.SubprocessError, ValueError):
         pass
@@ -149,8 +152,8 @@ def stop_external_bot() -> None:
 
 
 def start_bot(symbols: list[str], acc_index: int, bar_interval: int = DEFAULT_BAR_INTERVAL) -> dict[str, Any]:
-    if [normalize_symbol(symbol) for symbol in symbols] != [SYMBOL]:
-        raise ValueError(f"paper bot symbol must match configured active symbol {SYMBOL}")
+    if tuple(normalize_symbol(symbol) for symbol in symbols) != SYMBOLS:
+        raise ValueError(f"paper bot symbols must match configured portfolio {SYMBOLS}")
     if bar_interval not in BAR_INTERVAL_TYPES:
         raise ValueError(f"unsupported bar interval: {bar_interval}")
     available = accounts()
@@ -301,7 +304,7 @@ async function refreshBot(){const d=await (await fetch('/api/status')).json();if
 </script></body></html>'''
 
 
-HTML = HTML.replace("US.ANT", SYMBOL).replace("['ANT']", "['" + SYMBOL + "']")
+HTML = HTML.replace("US.ANT", SYMBOL).replace("['ANT']", json.dumps(list(SYMBOLS)))
 
 HTML = HTML.replace('value="2026-01-01"', 'value="2026-10-17"').replace('value="2026-11-13"', 'value="2026-11-16"').replace('value="2025-10-01"', 'value="2026-10-17"').replace('value="2026-11-11"', 'value="2026-11-16"').replace('value=".95"', 'value="1.0"')
 HTML = HTML.replace('<button class="btn" id="run">Run tester</button>', '<button class="btn" id="run">Run tester</button><button class="btn stop" id="stopBacktest">Stop tester</button>')

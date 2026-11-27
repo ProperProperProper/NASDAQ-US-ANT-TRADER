@@ -18,8 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let progress = NSProgressIndicator()
     let progressLabel = NSTextField(labelWithString: "0%")
     let output = NSTextView()
-    let symbolField = NSTextField(string: "US.ANT")
-    let multiSymbolField = NSTextField(string: "US.ANT,US.AAPL")
+    let symbolField = NSTextField(string: "US.AAPL")
+    let multiSymbolField = NSTextField(string: "US.AAPL,US.ADP,US.ALRM,US.ADMA")
     var sweepProcess: Process?
     var sweepBuffer = ""
 
@@ -133,8 +133,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         runtime.addSubview(stopButton)
         symbolField.frame = NSMakeRect(535, 88, 125, 24)
         symbolField.placeholderString = "US.AAPL"
+        symbolField.isEditable = false
         runtime.addSubview(symbolField)
-        let symbolButton = button("Apply symbol", #selector(applySymbol))
+        let symbolButton = button("Apply portfolio", #selector(applySymbol))
         symbolButton.frame = NSMakeRect(535, 53, 125, 30)
         runtime.addSubview(symbolButton)
 
@@ -173,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sweepButton.frame = NSMakeRect(18, 12, 245, 30)
         research.addSubview(sweepButton)
         multiSymbolField.frame = NSMakeRect(275, 15, 210, 24)
-        multiSymbolField.placeholderString = "US.ANT,US.AAPL"
+        multiSymbolField.placeholderString = "US.AAPL,US.ADP,US.ALRM,US.ADMA"
         research.addSubview(multiSymbolField)
         let multiButton = button("Test symbols 1–10m", #selector(startMultiSymbolTest))
         multiButton.frame = NSMakeRect(495, 12, 165, 30)
@@ -201,6 +202,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         runCommand("/usr/bin/python3", ["-c", "import json; print(json.load(open('\(projectRoot)/trading_system.json'))['active_symbol'])"]) { _, output in
             DispatchQueue.main.async { self.symbolField.stringValue = output.trimmingCharacters(in: .whitespacesAndNewlines) }
         }
+        runCommand("/usr/bin/python3", ["-c", "import json; print(','.join(json.load(open('\(projectRoot)/trading_system.json'))['active_symbols']))"]) { _, output in
+            DispatchQueue.main.async { self.multiSymbolField.stringValue = output.trimmingCharacters(in: .whitespacesAndNewlines) }
+        }
         runCommand("/usr/bin/nc", ["-z", "127.0.0.1", "11111"]) { code, _ in
             DispatchQueue.main.async { self.openD.stringValue = code == 0 ? "READY · 127.0.0.1:11111" : "OFFLINE" }
         }
@@ -225,7 +229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.account.stringValue = value == nil ? "SIMULATE · account unavailable" : "\(environment) · \(accountID) · \(side) \(qty) · orders \(orders)"
             }
         }
-        runCommand("/usr/bin/python3", ["-c", "import sys,json,os; sys.path.insert(0,'\(root)'); from trading_config import active_symbol,research_dir; p=research_dir(active_symbol())/'scheduler_state.json'; d=json.load(open(p)) if p.exists() else {}; print('scheduled: ' + str(d.get('state','NOT RUN')) + (' · ' + str(d.get('session')) if d.get('session') else ''))"]) { _, output in
+        runCommand("/usr/bin/python3", ["-c", "import sys,json; sys.path.insert(0,'\(root)'); from trading_config import active_symbols,research_dir; values=[]; [(lambda p,s: values.append(s.split('.')[-1]+':' + str((json.load(open(p)) if p.exists() else {}).get('state','NOT RUN'))))(research_dir(s)/'scheduler_state.json',s) for s in active_symbols()]; print('scheduled: '+', '.join(values))"]) { _, output in
             DispatchQueue.main.async {
                 if self.sweepProcess?.isRunning != true {
                     let value = output.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -233,10 +237,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        runCommand("/usr/bin/python3", ["-c", "import sys,json; sys.path.insert(0,'\(root)'); from trading_config import active_symbol,strategy_path; p=json.load(open(strategy_path())); print(f'{active_symbol()} · {p.get(\"interval\",\"?\")}m · lookback {p.get(\"params\",{}).get(\"grid_lookback\",\"?\")} · {p.get(\"mode\",\"?\")}')"]) { _, output in
+        runCommand("/usr/bin/python3", ["-c", "import sys,json; sys.path.insert(0,'\(root)'); from trading_config import active_symbols,strategy_path; print(' | '.join(f'{s.split(\".\")[-1]}:{(p:=json.load(open(strategy_path(s)))).get(\"interval\",\"?\")}m/L{p.get(\"params\",{}).get(\"grid_lookback\",\"?\")}' for s in active_symbols()))"]) { _, output in
             DispatchQueue.main.async { self.strategy.stringValue = output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "UNAVAILABLE" : output.trimmingCharacters(in: .whitespacesAndNewlines) }
         }
-        runCommand("/usr/bin/python3", ["-c", "import sys,sqlite3; sys.path.insert(0,'\(root)'); from trading_config import active_symbol; db=sqlite3.connect('\(root)/quant_dashboard.sqlite3'); print(db.execute(\"select coalesce(max(time_key),'none') || ' · ' || count(*) || ' candles' from candles where symbol=? and interval_minutes=1\",(active_symbol(),)).fetchone()[0])"]) { _, output in
+        runCommand("/usr/bin/python3", ["-c", "import sys,sqlite3; sys.path.insert(0,'\(root)'); from trading_config import active_symbols; db=sqlite3.connect('\(root)/quant_dashboard.sqlite3'); print(' | '.join(s.split('.')[-1]+':' + str(db.execute(\"select count(*) from candles where symbol=? and interval_minutes=1\",(s,)).fetchone()[0]) for s in active_symbols()))"]) { _, output in
             DispatchQueue.main.async { self.cache.stringValue = output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "UNAVAILABLE" : output.trimmingCharacters(in: .whitespacesAndNewlines) }
         }
         runCommand("/usr/bin/python3", ["-c", "import sys,glob,json; sys.path.insert(0,'\(root)'); from trading_config import active_symbol,research_dir; files=sorted(glob.glob(str(research_dir(active_symbol())/'runs/*/summary.json'))); d=json.load(open(files[-1])) if files else {}; w=d.get('winner') or {}; p=w.get('params') or {}; print('Winning strategy: ' + str(w.get('interval','none')) + ' · PnL ' + str(w.get('total_return_pct','?')) + '% · DD ' + str(w.get('max_drawdown_pct','?')) + '% · trades ' + str(w.get('trades','?')) + ' · params ' + json.dumps(p, separators=(',',':')))"]) { _, output in
@@ -278,10 +282,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func applySymbol() {
-        let requested = symbolField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let requested = multiSymbolField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !requested.isEmpty else { return }
         status.stringValue = "VALIDATING SYMBOL…"
-        runCommand(engineBinary, ["symbol-set", requested]) { code, output in
+        runCommand(engineBinary, ["portfolio-set", requested]) { code, output in
             DispatchQueue.main.async {
                 self.status.stringValue = code == 0 ? output.trimmingCharacters(in: .whitespacesAndNewlines) : "SYMBOL CHANGE REJECTED · \(output)"
                 self.refresh()
@@ -331,11 +335,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         process.standardError = pipe
         pipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            if !data.isEmpty, let text = String(data: data, encoding: .utf8) {
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+            } else if let text = String(data: data, encoding: .utf8) {
                 DispatchQueue.main.async { self.handleMultiSymbolChunk(text) }
             }
         }
         process.terminationHandler = { task in
+            pipe.fileHandleForReading.readabilityHandler = nil
             DispatchQueue.main.async {
                 self.progress.stopAnimation(nil)
                 self.progress.isIndeterminate = false
@@ -389,11 +396,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         process.standardError = pipe
         pipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
-            if !data.isEmpty, let text = String(data: data, encoding: .utf8) {
+            if data.isEmpty {
+                handle.readabilityHandler = nil
+            } else if let text = String(data: data, encoding: .utf8) {
                 DispatchQueue.main.async { self.handleSweepChunk(text) }
             }
         }
         process.terminationHandler = { task in
+            pipe.fileHandleForReading.readabilityHandler = nil
             DispatchQueue.main.async {
                 if task.terminationStatus == 0 { self.progress.doubleValue = 1; self.progressLabel.stringValue = "100%" }
                 self.sweepStatus.stringValue = task.terminationStatus == 0 ? "Sweep complete" : "Sweep failed (exit \(task.terminationStatus))"
