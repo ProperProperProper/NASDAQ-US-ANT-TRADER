@@ -8,6 +8,7 @@ macOS services used to run it.
 | Component | Current behavior |
 |---|---|
 | Moomoo OpenD | Required on `127.0.0.1:11111` |
+| Rust engine | `ai_gateway/target/release/trading_engine`, launchd label `com.local.us-ant-engine` |
 | Paper bot | `competition_bot.py`, US.ANT, locally configured standard SIMULATE account |
 | Initial paper bar | 10 minutes; replaced only by an eligible completed sweep |
 | Native app | `/Applications/US.ANT Paper Trader.app` |
@@ -15,8 +16,11 @@ macOS services used to run it.
 | Watchdog | `watch_moomoo_paper_stack.sh` |
 | Research scheduler | launchd checker every minute; reruns the same cached session 15 minutes after a successful sweep, at low CPU priority |
 
-The native app controls the local paper bot directly through launchd. Moomoo
-OpenD is a separate local service.
+The native app controls the paper worker through the Rust engine's local Unix
+socket. One launchd job owns the paper bot, research scheduler, AI gateway, and
+MLX Sentinel. Moomoo OpenD remains a separate broker application. The Moomoo
+and MLX integrations remain Python workers inside the Rust-supervised runtime.
+Only the engine's local launch plist supplies `US_ANT_PAPER_ACCOUNT_ID`.
 
 Research runs in a separate low-priority process. Completed promotions update
 the strategy file atomically; they do not restart the paper bot, interrupt
@@ -58,7 +62,7 @@ fail rather than silently using static data.
 
 ## Supported candle intervals
 
-The bot accepts every interval from `1` through `21` minutes. The
+The bot accepts every interval from `1` through `10` minutes. The
 default is `10`. Moomoo OpenD is queried only for 1-minute candles; requested
 intervals are built locally from complete 09:30–16:00 US-session buckets and
 stored with a `local_1m_aggregation` source marker.
@@ -66,7 +70,8 @@ stored with a `local_1m_aggregation` source marker.
 ## Start and health checks
 
 ```sh
-launchctl print gui/$(id -u)/com.local.nasdaq-paper-bot
+launchctl print gui/$(id -u)/com.local.us-ant-engine
+./ai_gateway/target/release/trading_engine status
 open -a "/Applications/US.ANT Paper Trader.app"
 ```
 

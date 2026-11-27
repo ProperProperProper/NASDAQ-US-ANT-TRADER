@@ -17,7 +17,6 @@ import json
 import logging
 import math
 import os
-import plistlib
 import subprocess
 import threading
 import time
@@ -34,7 +33,9 @@ from competition_bot import BAR_INTERVAL_TYPES, DEFAULT_BAR_INTERVAL, STANDARD_P
 from BBI_5m_Backtest.local_quant_tester import charts
 from strategy_57pct import BASELINE, run as strategy_run, walk_forward_optimize, walk_forward_replay
 from strategy_57pct import stats as strategy_stats
-from moomoo import AuType, KLType, KL_FIELD, OpenQuoteContext, OpenSecTradeContext, RET_OK, TrdMarket
+from moomoo import OpenQuoteContext, OpenSecTradeContext, RET_OK, TrdMarket
+from market_data import fetch_moomoo_candles as fetch_source_candles
+from minute_bars import MINUTE_INTERVALS, aggregate_us_session
 from quant_storage import load_candles, save_backtest, save_candles
 from quant_api import data_api, risk_json, strategy_api, write_live_strategy
 
@@ -43,13 +44,12 @@ ROOT = Path(__file__).resolve().parent
 PORT = 8780
 MAX_BACKTEST_DAYS = 30
 PAPER_TRADING_ENABLED = True
-EXTERNAL_BOT_LABEL = "com.local.nasdaq-paper-bot"
-PAPER_BOT_PLIST = Path.home() / "Library/LaunchAgents/com.local.nasdaq-paper-bot.plist"
+ENGINE_BINARY = ROOT / "ai_gateway/target/release/trading_engine"
 PAPER_ACCOUNT_ID = STANDARD_PAPER_ACCOUNT_ID
 BOT_STATE_PATH = ROOT / "competition_bot_state.json"
 INSTANCE_LOCK_PATH = Path(__file__).with_name("quant_dashboard.lock")
 SYMBOL = "US.ANT"
-INTERVAL_MINUTES = 1440
+INTERVAL_MINUTES = 10
 bot_lock = threading.Lock()
 bot_instance: CompetitionBot | None = None
 bot_thread: threading.Thread | None = None
@@ -84,34 +84,14 @@ def accounts() -> list[dict[str, Any]]:
 
 
 def fetch_moomoo_candles(symbol: str, start: str, end: str, interval_minutes: int) -> int:
-    interval_types = {1: KLType.K_1M, 3: KLType.K_3M, 5: KLType.K_5M, 10: KLType.K_10M, 15: KLType.K_15M, 30: KLType.K_30M, 1440: KLType.K_DAY}
-    if interval_minutes not in interval_types:
-        raise ValueError("Interval must be 1, 3, 5, 10, 15, 30, or 1440 minutes")
-    quote = OpenQuoteContext(host="127.0.0.1", port=11111)
-    frames = []
-    page_key = None
-    try:
-        while True:
-            ret, data, page_key = quote.request_history_kline(
-                code=symbol, start=start, end=end, ktype=interval_types[interval_minutes],
-                autype=AuType.QFQ, fields=[KL_FIELD.ALL], max_count=1000,
-                page_req_key=page_key, extended_time=False,
-            )
-            if ret != RET_OK:
-                raise RuntimeError(f"Moomoo candle request failed: {data}")
-            if data is not None and not data.empty:
-                frames.append(data.copy())
-            if page_key is None:
-                break
-    finally:
-        quote.close()
-    if not frames:
-        raise RuntimeError("Moomoo returned no candles for the requested range")
-    frame = pd.concat(frames, ignore_index=True)
-    frame["time_key"] = pd.to_datetime(frame["time_key"])
-    frame = frame.sort_values("time_key").drop_duplicates("time_key").set_index("time_key")
-    frame = frame.dropna(subset=["open", "high", "low", "close"])
-    return save_candles(frame, symbol, interval_minutes)
+    if interval_minutes not in MINUTE_INTERVALS:
+        raise ValueError("Interval must be between 1 and 10 minutes")
+    count = fetch_source_candles(symbol, start, end)
+    if interval_minutes == 1:
+        return count
+    source = load_candles(symbol, 1, start, f"{end}T23:59:59")
+    bars = aggregate_us_session(source, interval_minutes)
+    return save_candles(bars, symbol, interval_minutes, source="local_1m_aggregation")
 
 
 def execution_status() -> dict[str, Any]:
@@ -137,26 +117,19 @@ def execution_status() -> dict[str, Any]:
         return status
     try:
         result = subprocess.run(
-            ["/bin/launchctl", "print", f"gui/{os.getuid()}/{EXTERNAL_BOT_LABEL}"],
-            capture_output=True, text=True, timeout=2, check=False,
+            [str(ENGINE_BINARY), "status"], capture_output=True, text=True, timeout=2, check=False,
         )
-        if result.returncode == 0 and "state = running" in result.stdout:
-            pid = next((line.split("=", 1)[1].strip() for line in result.stdout.splitlines() if line.strip().startswith("pid =")), None)
+        paper = next((line for line in result.stdout.splitlines() if line.startswith("paper=")), "")
+        if result.returncode == 0 and paper.startswith("paper=enabled") and "pid=0" not in paper:
+            pid = paper.rsplit("pid=", 1)[-1]
             bar_interval = int(persisted_interval) if persisted_interval in BAR_INTERVAL_TYPES else DEFAULT_BAR_INTERVAL
-            try:
-                with PAPER_BOT_PLIST.open("rb") as handle:
-                    args = plistlib.load(handle).get("ProgramArguments", [])
-                if persisted_interval not in BAR_INTERVAL_TYPES and "--bar-interval" in args:
-                    bar_interval = int(args[args.index("--bar-interval") + 1])
-            except (OSError, ValueError, TypeError, IndexError):
-                pass
             return {
                 "active": True,
                 "symbols": ["US.ANT"],
                 "account_index": None,
                 "account_id": STANDARD_PAPER_ACCOUNT_ID,
                 "mode": "SIMULATE",
-                "source": "launchd",
+                "source": "rust_engine",
                 "pid": int(pid) if pid and pid.isdigit() else None,
                 "bar_interval": bar_interval,
                 "position": position_mark,
@@ -180,9 +153,8 @@ def stop_bot() -> None:
 
 
 def stop_external_bot() -> None:
-    domain = f"gui/{os.getuid()}"
     subprocess.run(
-        ["/bin/launchctl", "bootout", f"{domain}/{EXTERNAL_BOT_LABEL}"],
+        [str(ENGINE_BINARY), "bot-stop"],
         capture_output=True, text=True, timeout=5, check=False,
     )
 
@@ -197,31 +169,12 @@ def start_bot(symbols: list[str], acc_index: int, bar_interval: int = DEFAULT_BA
     account = next((item for item in available if int(item.get("acc_id", 0)) == PAPER_ACCOUNT_ID), None)
     if not account or str(account.get("trd_env", "")).upper() != "SIMULATE":
         raise ValueError(f"Required standard SIMULATE account {STANDARD_PAPER_ACCOUNT_ID} is unavailable")
-    if not PAPER_BOT_PLIST.exists():
-        raise RuntimeError("paper bot LaunchAgent is missing")
-    with PAPER_BOT_PLIST.open("rb") as handle:
-        plist = plistlib.load(handle)
-    args = list(plist.get("ProgramArguments", []))
-    if "--bar-interval" in args:
-        args[args.index("--bar-interval") + 1] = str(bar_interval)
-    else:
-        args.extend(["--bar-interval", str(bar_interval)])
-    symbol_args = args[2:]
-    while symbol_args and not symbol_args[0].startswith("--"):
-        args.pop(2)
-        symbol_args = args[2:]
-    args[2:2] = [str(symbols[0]).upper().removeprefix("US.")]
-    plist["ProgramArguments"] = args
-    with PAPER_BOT_PLIST.open("wb") as handle:
-        plistlib.dump(plist, handle)
-    domain = f"gui/{os.getuid()}"
-    subprocess.run(["/bin/launchctl", "bootout", f"{domain}/{EXTERNAL_BOT_LABEL}"], capture_output=True, text=True, timeout=5, check=False)
-    loaded = subprocess.run(["/bin/launchctl", "bootstrap", domain, str(PAPER_BOT_PLIST)], capture_output=True, text=True, timeout=5, check=False)
-    if loaded.returncode != 0:
-        fallback = subprocess.run(["/bin/launchctl", "load", "-w", str(PAPER_BOT_PLIST)], capture_output=True, text=True, timeout=5, check=False)
-        if fallback.returncode != 0:
-            raise RuntimeError(loaded.stderr.strip() or fallback.stderr.strip() or "could not load paper bot")
-    subprocess.run(["/bin/launchctl", "kickstart", "-k", f"{domain}/{EXTERNAL_BOT_LABEL}"], capture_output=True, text=True, timeout=5, check=False)
+    published_interval = int(json.loads((ROOT / "paper_bot_live_strategy.json").read_text())["interval"])
+    if bar_interval != published_interval:
+        raise ValueError("change the published paper strategy interval before starting the bot")
+    started = subprocess.run([str(ENGINE_BINARY), "bot-start"], capture_output=True, text=True, timeout=5, check=False)
+    if started.returncode:
+        raise RuntimeError(started.stderr.strip() or "could not start paper bot worker")
     time.sleep(1)
     return execution_status()
 
@@ -245,11 +198,11 @@ def do_backtest(payload: dict[str, Any], progress=None) -> dict[str, Any]:
         start_date = requested_end_date - pd.Timedelta(days=MAX_BACKTEST_DAYS)
     start = start_date.strftime("%Y-%m-%d")
     interval = int(payload.get("interval", INTERVAL_MINUTES))
-    if interval not in {1, 3, 5, 10, 15, 30, 60, 120, 180, 240, 1440}:
+    if interval not in MINUTE_INTERVALS:
         raise ValueError("Unsupported candle interval")
     if progress:
         progress(0, 0, "Fetching Moomoo candles")
-    bars_per_trading_day = max(1, 390 // interval) if interval < 1440 else 1
+    bars_per_trading_day = max(1, 390 // interval)
     warmup_trading_days = math.ceil((int(BASELINE["grid_lookback"]) + 5) / bars_per_trading_day)
     warmup_days = max(5, math.ceil(warmup_trading_days * 7 / 5))
     warmup_start = pd.Timestamp(start) - pd.Timedelta(days=warmup_days)
@@ -265,20 +218,6 @@ def do_backtest(payload: dict[str, Any], progress=None) -> dict[str, Any]:
     frame = load_candles(symbol, interval, warmup_start.strftime("%Y-%m-%d"), f"{end}T23:59:59")
     if frame.empty:
         raise ValueError("No cached Moomoo candles found after the fetch")
-    if interval == 1440:
-        # A daily run must never silently consume an intraday cache. Moomoo
-        # timestamps can vary by session, so validate the elapsed spacing rather
-        # than requiring midnight timestamps.
-        unique_days = frame.index.normalize().nunique()
-        median_spacing = frame.index.to_series().sort_values().diff().dropna().median()
-        if unique_days < max(2, len(frame) - 1) or median_spacing < pd.Timedelta(hours=12):
-            raise ValueError(
-                f"Daily candle integrity check failed: received {len(frame)} rows "
-                f"across {unique_days} dates with median spacing {median_spacing}. "
-                "Refusing to run the daily strategy on intraday data."
-            )
-        if len(frame) < int(BASELINE["grid_lookback"]) + 2:
-            raise ValueError("Not enough daily candles for the 45-day grid warm-up")
     frame.attrs["symbol"] = symbol
     frame.attrs["interval_minutes"] = interval
     # Every displayed result is stitched from unseen walk-forward folds. There
@@ -367,11 +306,11 @@ HTML = r'''<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Moomoo Quant Dashboard</title>
 <style>body{font:14px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#08111f;color:#eef4fb;margin:0}main{max-width:1400px;margin:auto;padding:24px}.grid{display:grid;grid-template-columns:300px 1fr;gap:16px}.panel{background:#101d2f;border:1px solid #28405e;border-radius:10px;padding:16px;margin-bottom:16px}.field{margin:10px 0}.field label{display:block;color:#9eb0c7;font-size:12px;margin-bottom:4px}input,select{width:100%;box-sizing:border-box;background:#0a1627;color:white;border:1px solid #28405e;border-radius:6px;padding:8px}.btn{border:0;border-radius:6px;padding:9px 12px;background:#1d9d70;color:#04130d;font-weight:700;cursor:pointer;margin:3px}.btn.stop{background:#842e43;color:white}.muted{color:#9eb0c7}.status{min-height:24px;color:#f2c66d;margin-top:8px}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}.card{background:#0a1627;border:1px solid #28405e;border-radius:7px;padding:10px}.card span{display:block;color:#9eb0c7;font-size:10px;text-transform:uppercase}.card strong{font-size:19px}.pos{color:#6ee7b7}.neg{color:#ff8998}.chart{max-width:100%;margin-top:8px;background:white;border-radius:6px}.table{overflow:auto;max-height:450px}table{border-collapse:collapse;width:100%;font-size:11px}th,td{border-bottom:1px solid #28405e;padding:7px;text-align:right;white-space:nowrap}th:first-child,td:first-child{text-align:left}th{color:#9eb0c7;font-weight:500}@media(max-width:850px){.grid{grid-template-columns:1fr}}</style></head>
 <body><main><h1>Moomoo Quant Dashboard</h1><p class="muted">US.ANT · Moomoo OpenD · selectable candle intervals · SQLite-backed tester</p>
-<div class="grid"><aside><div class="panel"><h2>Tester / optimiser</h2><div class="field"><label>Symbol</label><input id="symbol" value="US.ANT"></div><div class="field"><label>Start</label><input id="start" type="date" value="2026-01-01"></div><div class="field"><label>End</label><input id="end" type="date" value="2026-11-13"></div><div class="field"><label>Interval</label><select id="interval"><option value="10" selected>10 minutes</option><option value="5">5 minutes</option><option value="15">15 minutes</option><option value="30">30 minutes</option></select></div><div class="field"><label>Capital</label><input id="capital" type="number" value="100000"></div><div class="field"><label>Allocation</label><input id="allocation" type="number" step=".01" value=".95"></div><div class="field"><label>Slippage bps</label><input id="slippage" type="number" value="2"></div><label><input id="optimize" type="checkbox" checked> Optimise parameters</label><br><button class="btn" id="run">Run tester</button><div id="testStatus" class="status"></div></div>
-<div class="panel"><h2>Automatic paper execution</h2><div class="field"><label>Account index</label><input id="account" type="number" value="2"></div><div class="field"><label>Bot candle interval</label><select id="botInterval"><option value="1">1 minute</option><option value="3">3 minutes</option><option value="5">5 minutes</option><option value="10" selected>10 minutes</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">60 minutes</option><option value="120">120 minutes</option><option value="180">180 minutes</option><option value="240">240 minutes</option><option value="1440">Daily</option></select></div><button class="btn" id="startBot">Start ANT paper bot</button><button class="btn stop" id="stopBot">Stop</button><div id="botStatus" class="status"></div></div></aside>
+<div class="grid"><aside><div class="panel"><h2>Tester / optimiser</h2><div class="field"><label>Symbol</label><input id="symbol" value="US.ANT"></div><div class="field"><label>Start</label><input id="start" type="date" value="2026-01-01"></div><div class="field"><label>End</label><input id="end" type="date" value="2026-11-13"></div><div class="field"><label>Interval</label><select id="interval"><option value="1">1 minute</option><option value="2">2 minutes</option><option value="3">3 minutes</option><option value="4">4 minutes</option><option value="5">5 minutes</option><option value="6">6 minutes</option><option value="7">7 minutes</option><option value="8">8 minutes</option><option value="9">9 minutes</option><option value="10" selected>10 minutes</option></select></div><div class="field"><label>Capital</label><input id="capital" type="number" value="100000"></div><div class="field"><label>Allocation</label><input id="allocation" type="number" step=".01" value=".95"></div><div class="field"><label>Slippage bps</label><input id="slippage" type="number" value="2"></div><label><input id="optimize" type="checkbox" checked> Optimise parameters</label><br><button class="btn" id="run">Run tester</button><div id="testStatus" class="status"></div></div>
+<div class="panel"><h2>Automatic paper execution</h2><div class="field"><label>Account index</label><input id="account" type="number" value="2"></div><div class="field"><label>Bot candle interval</label><select id="botInterval"><option value="1">1 minute</option><option value="2">2 minutes</option><option value="3">3 minutes</option><option value="4">4 minutes</option><option value="5">5 minutes</option><option value="6">6 minutes</option><option value="7">7 minutes</option><option value="8">8 minutes</option><option value="9">9 minutes</option><option value="10" selected>10 minutes</option></select></div><button class="btn" id="startBot">Start ANT paper bot</button><button class="btn stop" id="stopBot">Stop</button><div id="botStatus" class="status"></div></div></aside>
 <section><div id="summary" class="panel"><h2>Results</h2><p class="muted">Click Run tester.</p></div><div class="panel"><h2>Price / trades</h2><img id="price" class="chart" hidden></div><div class="panel"><h2>Equity curve</h2><img id="equity" class="chart" hidden><h2>Monthly returns</h2><img id="monthly" class="chart" hidden></div><div class="panel"><h2>Optimiser ranking</h2><div class="table"><table><thead><tr><th>Rank</th><th>Return %</th><th>Max DD %</th><th>Trades</th><th>Win %</th><th>PF</th><th>Params</th></tr></thead><tbody id="optimiser"><tr><td colspan="7" class="muted">No optimisation yet.</td></tr></tbody></table></div></div><div class="panel"><h2>Trades</h2><div class="table"><table><thead><tr><th>Entry</th><th>Price</th><th>Qty</th><th>Exit</th><th>Price</th><th>P/L</th><th>Return</th><th>Reason</th></tr></thead><tbody id="trades"><tr><td colspan="8" class="muted">No trades yet.</td></tr></tbody></table></div></div></section></div></main>
 <script>
-const el=id=>document.getElementById(id);const money=x=>Number(x).toFixed(2);const pct=x=>Number(x).toFixed(2)+'%';const testerInterval=el('interval');if(testerInterval){testerInterval.innerHTML='<option value="1">1 minute</option><option value="3">3 minutes</option><option value="5">5 minutes</option><option value="10">10 minutes</option><option value="15">15 minutes</option><option value="30">30 minutes</option><option value="60">60 minutes</option><option value="120">120 minutes</option><option value="180">180 minutes</option><option value="240">240 minutes</option><option value="1440">Daily</option>';testerInterval.value='10';}
+const el=id=>document.getElementById(id);const money=x=>Number(x).toFixed(2);const pct=x=>Number(x).toFixed(2)+'%';const testerInterval=el('interval');if(testerInterval){testerInterval.innerHTML='<option value="1">1 minute</option><option value="2">2 minutes</option><option value="3">3 minutes</option><option value="4">4 minutes</option><option value="5">5 minutes</option><option value="6">6 minutes</option><option value="7">7 minutes</option><option value="8">8 minutes</option><option value="9">9 minutes</option><option value="10">10 minutes</option>';testerInterval.value='10';}
 async function runTester(){el('testStatus').textContent='Fetching Moomoo candles and running…';const payload={symbol:el('symbol').value||'US.ANT',start:el('start').value,end:el('end').value,interval:Number(el('interval').value),capital:Number(el('capital').value),allocation:Number(el('allocation').value),slippage_bps:Number(el('slippage').value),optimize:el('optimize').checked};try{const res=await fetch('/api/backtest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const d=await res.json();if(!res.ok)throw Error(d.error||'Tester failed');const s=d.stats;const vals=[['Return',pct(s.total_return_pct)],['Ending equity',money(s.ending_equity)],['Max drawdown',pct(s.max_drawdown_pct)],['Trades',s.trades],['Win rate',pct(s.win_rate_pct)],['Profit factor',s.profit_factor],['Avg trade',pct(s.average_trade_pct)],['Sharpe',s.sharpe_approx]];el('summary').innerHTML='<h2>US.ANT tester results</h2><p class="muted">Moomoo candles: '+d.candles_fetched+' · SQLite run: '+d.run_id+'</p><div class="cards">'+vals.map(v=>'<div class="card"><span>'+v[0]+'</span><strong class="'+(String(v[1]).startsWith('-')?'neg':'pos')+'">'+v[1]+'</strong></div>').join('')+'</div>';for(const [id,key] of [['price','price'],['equity','equity'],['monthly','monthly']]){el(id).src='data:image/png;base64,'+d.charts[key];el(id).hidden=false}el('optimiser').innerHTML=d.optimization.length?d.optimization.map((r,i)=>'<tr><td>'+(i+1)+'</td><td>'+r.stats.total_return_pct+'</td><td>'+r.stats.max_drawdown_pct+'</td><td>'+r.stats.trades+'</td><td>'+r.stats.win_rate_pct+'</td><td>'+r.stats.profit_factor+'</td><td>'+JSON.stringify(r.params)+'</td></tr>').join(''):'<tr><td colspan="7">No optimisation results.</td></tr>';el('trades').innerHTML=d.trades.map(t=>'<tr><td>'+t.entry_time+'</td><td>'+money(t.entry_price)+'</td><td>'+t.qty+'</td><td>'+t.exit_time+'</td><td>'+money(t.exit_price)+'</td><td>'+money(t.net_pnl)+'</td><td>'+pct(t.return_pct)+'</td><td>'+t.reason+'</td></tr>').join('')||'<tr><td colspan="8">No trades.</td></tr>';el('testStatus').textContent='Complete';}catch(e){el('testStatus').textContent=e.message;el('summary').innerHTML='<h2>Tester error</h2><p class="neg">'+e.message+'</p>'}}
 async function refreshBot(){const d=await (await fetch('/api/status')).json();el('botStatus').textContent=d.active?'Running '+d.symbols.join(', ')+' · '+d.mode+' · '+(d.bar_interval||10)+'m · account '+d.account_id:'Stopped'}el('run').onclick=runTester;el('startBot').onclick=async()=>{el('botStatus').textContent='Starting…';const r=await fetch('/api/paper/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbols:['ANT'],acc_index:Number(el('account').value),bar_interval:Number(el('botInterval').value)})});const d=await r.json();el('botStatus').textContent=r.ok?'Running '+d.symbols.join(', ')+' · '+d.mode+' · '+(d.bar_interval||10)+'m · account '+d.account_id:(d.error||'Start failed')};el('stopBot').onclick=async()=>{await fetch('/api/paper/stop',{method:'POST'});refreshBot()};refreshBot();setInterval(refreshBot,5000);
 </script></body></html>'''

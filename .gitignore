@@ -13,6 +13,7 @@ competition_bot_state.json
 quant_dashboard.sqlite3*
 .research_sweep.lock
 .research_scheduler_state.json
+.trading_engine_bot_paused
 .randomized_param_history.json
 quant_dashboard.lock
 quant_dashboard.log

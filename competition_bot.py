@@ -46,6 +46,7 @@ from quant_storage import save_candles, save_execution_event
 from minute_bars import MINUTE_INTERVALS, aggregate_us_session
 from quant_api import LIVE_STRATEGY_PATH, audit_api, risk_api, strategy_api
 from strategy_57pct import BASELINE
+from us_market_calendar import session_close, session_exit_time
 
 
 POSITION_FRACTION = 0.95
@@ -59,8 +60,6 @@ STANDARD_PAPER_ACCOUNT_ID = int(os.environ.get("US_ANT_PAPER_ACCOUNT_ID", "0"))
 ACTIVE_SYMBOL = "US.ANT"
 BAR_INTERVAL_TYPES = {minutes: KLType.K_1M for minutes in MINUTE_INTERVALS}
 ET = ZoneInfo("America/New_York")
-SESSION_EXIT_TIME = dt_time(15, 30)
-SESSION_CLOSE_TIME = dt_time(16, 0)
 STATE_PATH = Path(__file__).with_name("competition_bot_state.json")
 LOG_PATH = Path(__file__).with_name("competition_bot.log")
 PENDING_PROMOTION_PATH = Path(__file__).with_name("pending_paper_strategy_promotion.json")
@@ -166,6 +165,8 @@ class CompetitionBot:
             payload = json.loads(PENDING_PROMOTION_PATH.read_text())
             if str(payload.get("symbol", "")).upper() != symbol:
                 return
+            if payload.get("mode") != "SIMULATE" or int(payload.get("interval", 0)) not in BAR_INTERVAL_TYPES:
+                raise ValueError("pending promotion must use SIMULATE and a 1–10 minute interval")
             qty, _ = self.position(symbol)
             if qty != 0 or self.pending_order_side(symbol):
                 return
@@ -258,8 +259,10 @@ class CompetitionBot:
 
     @staticmethod
     def session_exit_due() -> bool:
-        now = datetime.now(ET).time()
-        return SESSION_EXIT_TIME <= now < SESSION_CLOSE_TIME
+        now = datetime.now(ET)
+        exit_at = session_exit_time(now.date())
+        close_at = session_close(now.date())
+        return bool(exit_at and close_at and exit_at <= now.time() < close_at)
 
     def session_reentry_blocked(self, symbol: str) -> bool:
         """Prevent a fresh entry after this session's mandatory exit."""
@@ -465,6 +468,14 @@ class CompetitionBot:
                     self.state["last_source_bar"][symbol] = source_bar
                     self._save_state()
                     continue
+                # A short-position fault is a live safety diagnostic, not a
+                # permanent state. Clear it once the broker confirms that the
+                # symbol is flat or long, so restarts do not retain stale risk
+                # information from a manually closed position.
+                if self.state.pop("position_fault", None) is not None:
+                    logging.info("cleared stale position fault symbol=%s qty=%s", symbol, qty)
+                    save_execution_event("POSITION_FAULT_CLEARED", symbol, {"qty": qty, "avg": avg, "paper": True})
+                    self._save_state()
                 logging.info("querying snapshot symbol=%s", symbol)
                 price = self.market_price(symbol)
                 self.record_position_mark(symbol, qty, avg)

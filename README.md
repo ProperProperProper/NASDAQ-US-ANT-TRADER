@@ -53,11 +53,12 @@ The 2 bps figure is an execution assumption, not a guarantee. Results depend on 
 ## Files
 
 - `competition_bot.py` — US.ANT paper-trading process.
+- `ai_gateway/src/bin/trading_engine.rs` — Rust supervisor for the paper bot, research, gateway, and MLX workers.
 - `market_data.py` — local Moomoo 1-minute ingestion used by native research.
 - `DesktopApp.swift` — native macOS AppKit GUI source for runtime status, paper-bot controls, and interval research.
 - `ai_gateway/` — bundled Rust Multi-Model AI Gateway and its MCP bridge; the strategy lab no longer depends on a sibling project.
 - `docs/AI_ENGINEERING_CONTROLS.md` — provider-neutral AI safety, tool, prompt, evaluation, and release controls.
-- `scripts/app_minute_interval_sweep.py` — US.ANT 1m-through-21m research sweep built from the single 1m cache and limited to the latest 5 sessions.
+- `scripts/app_minute_interval_sweep.py` — US.ANT 1m-through-10m research sweep built from the single 1m cache and limited to the latest 5 sessions.
 - `ops/start_ai_gateway.sh` — starts the bundled gateway on `127.0.0.1:8788`.
 - `quant_storage.py` — SQLite candle, run, trade, and event storage.
 - `strategy_57pct.py` — strategy and walk-forward evaluation logic.
@@ -65,7 +66,7 @@ The 2 bps figure is an execution assumption, not a guarantee. Results depend on 
 - `watch_moomoo_paper_stack.sh` — local health check for OpenD and the bot.
 - `docs/PAPER_BOT_OPERATIONS.md` — current runtime and troubleshooting reference.
 
-The native app starts the bundled AI gateway when needed. The interval sweep
+The native app controls the single Rust engine launch agent. The interval sweep
 calls the bundled `ai_gateway/ai/mcp_server.py` plugin, which routes bounded
 proposal requests through the gateway; the local deterministic evaluator still
 owns all scoring and paper-bot configuration changes.
@@ -74,8 +75,8 @@ Moomoo OpenD must be running on `127.0.0.1:11111` to fetch fresh candles. Do not
 
 ## Moomoo SIMULATE paper bot
 
-`competition_bot.py` is the paper-execution boundary. The installed launchd job
-runs US.ANT against the locally configured standard Moomoo SIMULATE account. It uses the
+`competition_bot.py` is the paper-execution boundary. The installed Rust engine
+supervises it against the locally configured standard Moomoo SIMULATE account. It uses the
 interval and parameters published by the latest completed research sweep (10m
 is only the initial fallback). The bot does not place live orders.
 
@@ -100,7 +101,7 @@ troubleshooting.
 Research fetches only `US.ANT` 1-minute candles from Moomoo OpenD with
 `request_history_kline`, caches the source candles in `quant_dashboard.sqlite3`,
 and aggregates complete regular-session bars locally for each requested interval
-from 1m through 21m. The interval sweep uses up to the latest 5 completed US
+from 1m through 10m. The interval sweep uses up to the latest 5 completed US
 sessions; a newly listed symbol may have fewer sessions available.
 It stores each run, optimizer result, trade, and paper execution event in SQLite.
 The research output reports return,
@@ -127,15 +128,15 @@ open -a "/Applications/US.ANT Paper Trader.app"
 ```
 
 The GUI shows bot health and account, provides refresh/start/stop controls, maps each tested
-interval to return, ending equity, and trade count, and runs the 1m-through-21m sweep in the
+interval to return, ending equity, and trade count, and runs the 1m-through-10m sweep in the
 background. The scheduler runs a larger AI-assisted parameter sweep during US pre-market and
 smaller fine-tuning sweeps every 15 minutes during regular trading hours. Grid interval count,
 lookback, entry/exit mode, and bounded trailing parameters are tested. A completed sweep records
 candidate interval and parameter sets for review; it does not automatically change the SIMULATE
-paper bot. Closing the GUI does not stop the paper bot. Research is serialized to one worker so
-it remains asynchronous and does not disrupt live paper execution.
+paper bot. Closing the GUI does not stop the paper bot. Each research sweep uses up to four
+evaluator workers at low priority; the engine keeps paper execution in a separate worker.
 
-The installed launchd research job checks continuously every minute. It runs
+The engine's research worker checks continuously every minute. It runs
 for a new cached US session immediately, then reruns on the same cached data 15
 minutes after the previous successful sweep completes. Research runs at low
 CPU priority in its own process. Automatic promotion is held until the sweep

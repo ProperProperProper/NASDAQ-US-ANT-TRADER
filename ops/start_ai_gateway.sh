@@ -11,7 +11,9 @@ export NVIDIA_FAST_MODEL="${NVIDIA_FAST_MODEL:-nvidia/nemotron-3.5-bolt-e4b}"
 export NVIDIA_HARD_MODEL="${NVIDIA_HARD_MODEL:-deepseek-ai/deepseek-v4.1-flash}"
 export NVIDIA_FALLBACK_MODEL="${NVIDIA_FALLBACK_MODEL:-nvidia/nemotron-3.5-bolt-e4b}"
 export NVIDIA_REQUEST_TIMEOUT="${NVIDIA_REQUEST_TIMEOUT:-15}"
-export MLX_REQUEST_TIMEOUT="${MLX_REQUEST_TIMEOUT:-10}"
+# GPT-OSS can take several seconds to load/answer on Apple Silicon. Keep the
+# local route bounded, but do not turn normal inference into a false 502.
+export MLX_REQUEST_TIMEOUT="${MLX_REQUEST_TIMEOUT:-120}"
 export MULTI_MODEL_GATEWAY_TOOL_TIMEOUT="${MULTI_MODEL_GATEWAY_TOOL_TIMEOUT:-120}"
 # MLX is the primary gateway backend; NVIDIA is used only on local failure.
 export AI_PROVIDER="${AI_PROVIDER:-local}"

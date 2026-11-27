@@ -4,7 +4,7 @@ from __future__ import annotations
 import pandas as pd
 
 
-MINUTE_INTERVALS = tuple(range(1, 22))
+MINUTE_INTERVALS = tuple(range(1, 11))
 
 
 def aggregate_us_session(frame: pd.DataFrame, minutes: int, include_incomplete: bool = False) -> pd.DataFrame:
@@ -15,7 +15,7 @@ def aggregate_us_session(frame: pd.DataFrame, minutes: int, include_incomplete: 
     known and is the value used by the causal grid signal.
     """
     if minutes not in MINUTE_INTERVALS:
-        raise ValueError("minutes must be between 1 and 21")
+        raise ValueError("minutes must be between 1 and 10")
     if frame.empty:
         return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
     x = frame.copy()

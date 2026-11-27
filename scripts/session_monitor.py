@@ -8,6 +8,7 @@ import os
 import plistlib
 import sqlite3
 import subprocess
+import sys
 import time
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -15,8 +16,10 @@ from zoneinfo import ZoneInfo
 from moomoo import OpenQuoteContext, OpenSecTradeContext, RET_OK, TrdEnv, TrdMarket
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from us_market_calendar import session_phase
 ET = ZoneInfo("America/New_York")
-ACCOUNT_PLIST = Path.home() / "Library/LaunchAgents/com.local.nasdaq-paper-bot.plist"
+ACCOUNT_PLIST = Path.home() / "Library/LaunchAgents/com.local.us-ant-engine.plist"
 SYMBOL = "US.ANT"
 TERMINAL = {"FILLED_ALL", "CANCELLED_ALL", "CANCELLED_PART", "FAILED", "DELETED", "CANCELLED"}
 
@@ -26,8 +29,8 @@ def account_id() -> int:
     if value:
         return int(value)
     with ACCOUNT_PLIST.open("rb") as handle:
-        args = plistlib.load(handle).get("ProgramArguments", [])
-    return int(args[args.index("--acc-id") + 1])
+        configured = plistlib.load(handle).get("EnvironmentVariables", {})
+    return int(configured["US_ANT_PAPER_ACCOUNT_ID"])
 
 
 def process_count(fragment: str) -> int:
@@ -55,7 +58,7 @@ def check() -> dict:
         state = json.loads((ROOT / "competition_bot_state.json").read_text()) if (ROOT / "competition_bot_state.json").exists() else {}
         return {
             "time": dt.datetime.now(ET).isoformat(timespec="seconds"),
-            "phase": "RTH" if dt.time(9, 30) <= dt.datetime.now(ET).time() < dt.time(16) else "PREMARKET",
+            "phase": session_phase(dt.datetime.now(ET).date(), dt.datetime.now(ET).time()),
             "account": acct, "environment": env,
             "bot_count": process_count("competition_bot.py"),
             "research_count": process_count("continuous_research_scheduler.py"),
@@ -74,6 +77,21 @@ def check() -> dict:
 
 
 def main() -> int:
+    if "--once" in sys.argv:
+        try:
+            value = check()
+            fault = (
+                value["environment"] != "SIMULATE"
+                or value["bot_count"] != 1
+                or value["research_count"] > 1
+                or value["qty"] < 0
+            )
+            value["state"] = "FAULT" if fault else "HEALTHY"
+            print(json.dumps(value, sort_keys=True), flush=True)
+            return 0 if not fault else 1
+        except Exception as exc:
+            print(json.dumps({"state": "FAULT", "error": repr(exc)}), flush=True)
+            return 1
     last = None
     while True:
         now = dt.datetime.now(ET)

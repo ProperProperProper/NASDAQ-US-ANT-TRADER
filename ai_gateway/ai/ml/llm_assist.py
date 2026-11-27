@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Use Multi-Model AI Gateway's verified-free NVIDIA route to bootstrap ML datasets.
+"""Use the local GPT-OSS route to bootstrap ML datasets.
 
 The gateway, not this script, owns credentials and the NVIDIA free-model
 allowlist. Generated labels are marked for human review and are never deployed
@@ -23,7 +23,7 @@ def call(gateway: str, prompt: str) -> dict:
         "private/simple/local-tool work, apple for Apple-native writing or "
         "Foundation Models tasks, and nvidia for difficult reasoning. Request: " + prompt
     )
-    body = {"model": "auto", "messages": [{"role": "user", "content": instruction}], "max_tokens": 160, "extra_body": {"provider": "nvidia", "agent": False}}
+    body = {"model": "local", "messages": [{"role": "user", "content": instruction}], "max_tokens": 128, "extra_body": {"provider": "local", "agent": False}}
     request = Request(gateway.rstrip("/") + "/v1/chat/completions", data=json.dumps(body).encode(), headers={"content-type": "application/json"})
     with urlopen(request, timeout=60) as response:
         payload = json.loads(response.read())
@@ -32,7 +32,7 @@ def call(gateway: str, prompt: str) -> dict:
     label = json.loads(content)
     if label.get("provider") not in ALLOWED:
         raise ValueError(f"model returned invalid provider: {label}")
-    return {"prompt": prompt, "provider": label["provider"], "rationale": label.get("rationale", ""), "source": "free-nvidia-bootstrap", "review_required": True}
+    return {"prompt": prompt, "provider": label["provider"], "rationale": label.get("rationale", ""), "source": "local-gpt-oss-bootstrap", "review_required": True}
 
 
 def main() -> None:

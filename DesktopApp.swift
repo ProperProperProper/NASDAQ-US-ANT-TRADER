@@ -1,7 +1,8 @@
 import Cocoa
 
-let botLabel = "com.local.nasdaq-paper-bot"
-let botPlist = "/Users/local.local/Library/LaunchAgents/com.local.nasdaq-paper-bot.plist"
+let botLabel = "com.local.us-ant-engine"
+let botPlist = "/Users/local.local/Library/LaunchAgents/com.local.us-ant-engine.plist"
+let engineBinary = "/Users/local.local/Projects/TradingSystem/ai_gateway/target/release/trading_engine"
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow!
@@ -187,13 +188,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         runCommand("/usr/bin/nc", ["-z", "127.0.0.1", "11111"]) { code, _ in
             DispatchQueue.main.async { self.openD.stringValue = code == 0 ? "READY · 127.0.0.1:11111" : "OFFLINE" }
         }
-        runCommand("/usr/bin/nc", ["-z", "127.0.0.1", "8788"]) { code, _ in
-            DispatchQueue.main.async { self.gateway.stringValue = code == 0 ? "READY · bundled MCP" : "OFFLINE · AI unavailable" }
-        }
-        runCommand("/usr/bin/python3", ["-c", "import json, urllib.request; d=json.load(urllib.request.urlopen('http://127.0.0.1:8780/api/status', timeout=2)); print('SIMULATE · ' + str(d.get('account_id', 'not configured')))"]) { _, output in
-            DispatchQueue.main.async { self.account.stringValue = output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "SIMULATE · account unavailable" : output.trimmingCharacters(in: .whitespacesAndNewlines) }
-        }
         let root = "/Users/local.local/Projects/TradingSystem"
+        runCommand("/usr/bin/nc", ["-z", "127.0.0.1", "8081"]) { sentinelCode, _ in
+            self.runCommand("/usr/bin/nc", ["-z", "127.0.0.1", "8788"]) { gatewayCode, _ in
+                DispatchQueue.main.async {
+                    self.gateway.stringValue = sentinelCode == 0 && gatewayCode == 0 ? "READY · GPT-OSS Sentinel + gateway" : "OFFLINE · local AI unavailable"
+                }
+            }
+        }
+        runCommand("/usr/bin/python3", ["\(root)/scripts/session_monitor.py", "--once"]) { _, output in
+            let line = output.split(separator: "\n").last(where: { $0.first == "{" })
+            let data = line.flatMap { $0.data(using: .utf8) }
+            let value = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+            let environment = value?["environment"] as? String ?? "UNKNOWN"
+            let accountID = value?["account"] as? Int ?? 0
+            let side = value?["position_side"] as? String ?? "UNKNOWN"
+            let qty = value?["qty"] as? Int ?? 0
+            let orders = value?["active_orders"] as? Int ?? 0
+            DispatchQueue.main.async {
+                self.account.stringValue = value == nil ? "SIMULATE · account unavailable" : "\(environment) · \(accountID) · \(side) \(qty) · orders \(orders)"
+            }
+        }
         runCommand("/usr/bin/python3", ["-c", "import json, os; p='\(root)/.research_scheduler_state.json'; d=json.load(open(p)) if os.path.exists(p) else {}; print('scheduled: ' + str(d.get('state','NOT RUN')) + (' · ' + str(d.get('session')) if d.get('session') else ''))"]) { _, output in
             DispatchQueue.main.async {
                 if self.sweepProcess?.isRunning != true {
@@ -223,9 +238,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        runCommand("/bin/launchctl", ["print", "gui/\(getuid())/\(botLabel)"]) { code, output in
-            let running = code == 0 && output.contains("state = running")
-            let pid = output.split(separator: "\n").first(where: { $0.contains("pid =") })?.split(separator: "=").last?.trimmingCharacters(in: .whitespaces) ?? ""
+        runCommand(engineBinary, ["status"]) { code, output in
+            let paper = output.split(separator: "\n").first(where: { $0.hasPrefix("paper=") }) ?? ""
+            let running = code == 0 && paper.contains("paper=enabled") && !paper.contains("pid=0")
+            let pid = paper.split(separator: "pid=").last.map(String.init) ?? ""
             DispatchQueue.main.async {
                 self.status.stringValue = running ? "RUNNING · SIMULATE · PID \(pid)" : "STOPPED"
                 if self.account.stringValue.isEmpty { self.account.stringValue = "SIMULATE · account unavailable" }
@@ -235,12 +251,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func startBot() {
         runCommand("/bin/launchctl", ["bootstrap", "gui/\(getuid())", botPlist]) { _, _ in
-            self.runCommand("/bin/launchctl", ["kickstart", "-k", "gui/\(getuid())/\(botLabel)"]) { _, _ in self.refresh() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                self.runCommand(engineBinary, ["bot-start"]) { _, _ in self.refresh() }
+            }
         }
     }
 
     @objc func stopBot() {
-        runCommand("/bin/launchctl", ["bootout", "gui/\(getuid())/\(botLabel)"]) { _, _ in self.refresh() }
+        runCommand(engineBinary, ["bot-stop"]) { _, _ in self.refresh() }
     }
 
     @objc func startSweep() {
@@ -257,14 +275,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.launchSweep(root: root)
                 return
             }
-            let gateway = Process()
-            gateway.executableURL = URL(fileURLWithPath: "/bin/zsh")
-            gateway.arguments = ["\(root)/ops/start_ai_gateway.sh"]
-            gateway.currentDirectoryURL = URL(fileURLWithPath: root)
-            gateway.standardOutput = Pipe()
-            gateway.standardError = Pipe()
-            self.gatewayProcess = gateway
-            try? gateway.run()
+            self.runCommand("/bin/launchctl", ["bootstrap", "gui/\(getuid())", botPlist]) { _, _ in }
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.launchSweep(root: root) }
         }
     }

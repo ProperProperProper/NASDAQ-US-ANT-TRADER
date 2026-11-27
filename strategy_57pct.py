@@ -4,10 +4,11 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass
-from datetime import time
 
 import numpy as np
 import pandas as pd
+
+from us_market_calendar import session_exit_time
 
 
 BASELINE = {
@@ -165,7 +166,8 @@ def run(candles: pd.DataFrame, params: dict = BASELINE, capital: float = 100000.
                 and peak_price >= position["entry"] * (1.0 + trailing_activation_pct)
             )
             trailing_stop = trailing_armed and price <= peak_price * (1.0 - trailing_stop_pct)
-            session_exit = stamp.time() >= time(15, 30)
+            exit_at = session_exit_time(pd.Timestamp(stamp).date())
+            session_exit = bool(exit_at and stamp.time() >= exit_at)
             if take_profit or stop_loss or trailing_stop or session_exit or bool(bar.close_signal):
                 reason = (
                     "TAKE_PROFIT" if take_profit else

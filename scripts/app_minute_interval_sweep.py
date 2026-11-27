@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Research US.ANT on synthetic 1m..21m candles built from a 1m Moomoo cache.
+"""Research US.ANT on synthetic 1m..10m candles built from a 1m Moomoo cache.
 
 The sweep tests the full 5-session window, publishes the highest-return tested
 interval and parameters without interrupting the configured SIMULATE paper bot.
@@ -10,6 +10,7 @@ import argparse
 import fcntl
 import json
 import multiprocessing
+import os
 import random
 import sqlite3
 import subprocess
@@ -22,9 +23,13 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 RANDOM_HISTORY = ROOT / ".randomized_param_history.json"
 MAX_RESEARCH_SESSIONS = 5
+MAX_INTERVAL_MINUTES = 10
+MAX_KNOWN_SUCCESSFUL_PER_INTERVAL = 5
 # Keep research below the CPU threshold used by MLX Sentinel so local AI and
 # the paper bot remain responsive while sweeps run asynchronously.
-RESEARCH_WORKERS = 1
+# Use four isolated evaluator workers so research finishes promptly while
+# remaining well below the machine-wide resource ceiling on this 10-core Mac.
+RESEARCH_WORKERS = max(1, min(4, int(os.environ.get("US_ANT_RESEARCH_WORKERS", "4"))))
 # Automatic promotion is permitted only into the local SIMULATE paper bot.
 # The evaluator includes slippage and promotion is restricted to a profitable
 # candidate that beats the currently active parameters on the active interval.
@@ -33,6 +38,7 @@ MIN_PROMOTION_SESSIONS = 2
 MIN_PROMOTION_TRADES = 2
 PENDING_PROMOTION_PATH = ROOT / "pending_paper_strategy_promotion.json"
 _WORK_FRAME = None
+_KNOWN_SUCCESSFUL_BY_INTERVAL: dict[int, dict[str, dict]] | None = None
 
 
 def _init_evaluator(frame: pd.DataFrame) -> None:
@@ -101,7 +107,33 @@ def param_key(params: dict) -> str:
 
 def known_successful(interval: int) -> list[dict]:
     """Return prior profitable parameters before generating new random candidates."""
-    found = {}
+    global _KNOWN_SUCCESSFUL_BY_INTERVAL
+    if _KNOWN_SUCCESSFUL_BY_INTERVAL is None:
+        _KNOWN_SUCCESSFUL_BY_INTERVAL = {}
+        # The sweep evaluates only the latest five completed sessions. Reuse
+        # successful candidates from the five newest result files rather than
+        # reparsing hundreds of MB of stale, out-of-window history.
+        result_files = sorted(
+            ROOT.glob("strategy_lab_runs/ANT-MINUTE-*/profitable_params.jsonl"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )[:5]
+        for path in result_files:
+            try:
+                for line in path.read_text().splitlines():
+                    row = json.loads(line)
+                    if row.get("stats", {}).get("total_return_pct", 0) <= 0:
+                        continue
+                    interval_text = str(row.get("interval", ""))
+                    if not interval_text.endswith("m"):
+                        continue
+                    interval_value = int(interval_text[:-1])
+                    params = row.get("params", {})
+                    _KNOWN_SUCCESSFUL_BY_INTERVAL.setdefault(interval_value, {})[param_key(params)] = params
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+
+    found = dict(_KNOWN_SUCCESSFUL_BY_INTERVAL.get(interval, {}))
     config_path = ROOT / "paper_bot_live_strategy.json"
     if config_path.exists():
         try:
@@ -110,16 +142,7 @@ def known_successful(interval: int) -> list[dict]:
                 found[param_key(config.get("params", {}))] = dict(config["params"])
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             pass
-    for path in sorted(ROOT.glob("strategy_lab_runs/ANT-MINUTE-*/profitable_params.jsonl")):
-        try:
-            for line in path.read_text().splitlines():
-                row = json.loads(line)
-                if row.get("interval") == f"{interval}m" and row.get("stats", {}).get("total_return_pct", 0) > 0:
-                    params = row.get("params", {})
-                    found[param_key(params)] = params
-        except (OSError, TypeError, ValueError, json.JSONDecodeError):
-            continue
-    return list(found.values())
+    return list(found.values())[:MAX_KNOWN_SUCCESSFUL_PER_INTERVAL]
 
 
 def candidates(interval: int, count: int, excluded: set[str]) -> list[dict]:
@@ -276,10 +299,10 @@ def promotion_gate(winner: dict | None, current_stats: dict | None = None, compl
 
 def parse_intervals(value: str | None) -> list[int]:
     if not value:
-        return list(range(1, 22))
+        return list(range(1, MAX_INTERVAL_MINUTES + 1))
     values = sorted({int(item) for item in value.split(",") if item.strip()})
-    if not values or any(item < 1 or item > 21 for item in values):
-        raise ValueError("--intervals must contain comma-separated values from 1 to 21")
+    if not values or any(item < 1 or item > MAX_INTERVAL_MINUTES for item in values):
+        raise ValueError(f"--intervals must contain comma-separated values from 1 to {MAX_INTERVAL_MINUTES}")
     return values
 
 
@@ -290,10 +313,10 @@ def run_main() -> int:
     ap.add_argument("--end", default=pd.Timestamp.now().strftime("%Y-%m-%d"))
     ap.add_argument("--refresh-1m", action="store_true")
     ap.add_argument("--candidates", type=int, default=250)
-    ap.add_argument("--total-candidates", type=int, default=None, help="Total randomized candidates shared across the 21 intervals")
+    ap.add_argument("--total-candidates", type=int, default=None, help="Total randomized candidates shared across the 1m..10m intervals")
     ap.add_argument("--ai", action="store_true", help="Add bounded AI proposals from the local gateway")
     ap.add_argument("--phase", choices=["PREMARKET", "RTH", "MANUAL"], default="MANUAL", help="Research phase for scheduling and audit records")
-    ap.add_argument("--intervals", default=None, help="Comma-separated intervals to test; defaults to 1..21")
+    ap.add_argument("--intervals", default=None, help="Comma-separated intervals to test; defaults to 1..10")
     ap.add_argument("--run-dir", type=Path, default=ROOT / "strategy_lab_runs")
     args = ap.parse_args()
     intervals = parse_intervals(args.intervals)

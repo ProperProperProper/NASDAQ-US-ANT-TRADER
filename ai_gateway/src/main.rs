@@ -1483,38 +1483,21 @@ async fn chat(
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let preferred = if agent {
-        // The bundled MLX model is excellent for local inference but does not
-        // reliably emit tool calls. Use the verified free NVIDIA Nemotron
-        // planner for agent requests; all tools still execute locally here.
-        "nvidia"
+        // Local GPT-OSS is the default planner; explicit cloud/model fallback
+        // remains available for agent requests that need it.
+        "local"
     } else if selected == "auto" {
-        let local_load = state
-            .local_inflight
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let nvidia_load = state
-            .nvidia_inflight
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let learned = state
-            .router_model
-            .as_ref()
-            .and_then(|model| learned_provider(model, &req))
-            .filter(|prediction| {
-                let minimum = env::var("MULTI_MODEL_GATEWAY_ROUTER_MIN_CONFIDENCE")
-                    .ok()
-                    .and_then(|value| value.parse::<f64>().ok())
-                    .unwrap_or(0.65);
-                prediction.confidence >= minimum
-            });
-        match learned
-            .as_ref()
-            .map(|prediction| prediction.provider.as_str())
-        {
+        let local_load = state.local_inflight.load(std::sync::atomic::Ordering::Relaxed);
+        let nvidia_load = state.nvidia_inflight.load(std::sync::atomic::Ordering::Relaxed);
+        let learned = state.router_model.as_ref().and_then(|model| learned_provider(model, &req)).filter(|prediction| {
+            let minimum = env::var("MULTI_MODEL_GATEWAY_ROUTER_MIN_CONFIDENCE").ok().and_then(|value| value.parse::<f64>().ok()).unwrap_or(0.65);
+            prediction.confidence >= minimum
+        });
+        match learned.as_ref().map(|prediction| prediction.provider.as_str()) {
             Some("apple") => "apple",
             Some("nvidia") => "nvidia",
             Some("local") => "local",
-            _ if score <= state.cfg.local_max_difficulty && local_load <= nvidia_load + 1 => {
-                "local"
-            }
+            _ if score <= state.cfg.local_max_difficulty && local_load <= nvidia_load + 1 => "local",
             _ => "nvidia",
         }
     } else {
@@ -1593,27 +1576,12 @@ async fn chat(
                         Json(json!({"error":{"message":first}})),
                     ));
                 }
-                let alternate = if preferred == "local" {
-                    "nvidia"
-                } else {
-                    "local"
-                };
-                let can_try = alternate == "local" && local_healthy(&state).await
-                    || alternate == "nvidia" && nvidia_healthy(&state).await;
+                let alternate = if preferred == "local" { "nvidia" } else { "local" };
+                let can_try = alternate == "local" && local_healthy(&state).await || alternate == "nvidia" && nvidia_healthy(&state).await;
                 if !can_try {
-                    return Err((
-                        axum::http::StatusCode::BAD_GATEWAY,
-                        Json(json!({"error":{"message":first}})),
-                    ));
+                    return Err((axum::http::StatusCode::BAD_GATEWAY, Json(json!({"error":{"message":first}}))));
                 }
-                dispatch_stream(&state, alternate, payload)
-                    .await
-                    .map_err(|error| {
-                        (
-                            axum::http::StatusCode::BAD_GATEWAY,
-                            Json(json!({"error":{"message":error}})),
-                        )
-                    })?
+                dispatch_stream(&state, alternate, payload).await.map_err(|error| (axum::http::StatusCode::BAD_GATEWAY, Json(json!({"error":{"message":error}}))))?
             }
         };
         let elapsed = started.elapsed().as_secs_f64() * 1000.0;
@@ -1891,7 +1859,7 @@ async fn serve(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-#[tokio::main]
+#[tokio::main(worker_threads = 4)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     match &cli.command {

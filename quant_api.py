@@ -84,6 +84,8 @@ LIVE_STRATEGY_PATH = Path(__file__).with_name("paper_bot_live_strategy.json")
 
 def write_live_strategy(symbol: str, interval: int, params: dict[str, Any], run_id: str | None = None) -> dict[str, Any]:
     """Publish the latest ANT research parameters for the SIMULATE bot."""
+    if symbol != "US.ANT" or int(interval) not in range(1, 11):
+        raise ValueError("paper strategy requires US.ANT and a 1–10 minute interval")
     payload = {
         "symbol": symbol,
         "interval": int(interval),

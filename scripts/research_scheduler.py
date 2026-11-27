@@ -10,6 +10,9 @@ import sys
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from us_market_calendar import session_phase as market_session_phase
+
 ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "quant_dashboard.sqlite3"
 STATE = ROOT / ".research_scheduler_state.json"
@@ -17,18 +20,15 @@ RERUN_INTERVAL = dt.timedelta(minutes=15)
 PREMARKET_CANDIDATES = "20000"
 PREMARKET_FAST_CANDIDATES = "500"
 RTH_CANDIDATES = "2000"
+MAX_INTERVAL_MINUTES = 10
 ET = ZoneInfo("America/New_York")
 
 
 def session_phase(now: dt.datetime) -> str:
     """Return the US equity session phase for an aware timestamp."""
     eastern = now.astimezone(ET)
-    clock = eastern.time()
-    if dt.time(7, 0) <= clock < dt.time(9, 30):
-        return "PREMARKET"
-    if dt.time(9, 30) <= clock < dt.time(16, 0):
-        return "RTH"
-    return "OFF_HOURS"
+    phase = market_session_phase(eastern.date(), eastern.time())
+    return "OFF_HOURS" if phase == "OFF_HOURS" else phase
 
 
 def latest_session() -> str | None:
@@ -44,7 +44,7 @@ def active_intervals() -> str:
         center = int(config.get("interval", 1))
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         center = 1
-    return ",".join(str(value) for value in range(max(1, center - 2), min(21, center + 2) + 1))
+    return ",".join(str(value) for value in range(max(1, center - 2), min(MAX_INTERVAL_MINUTES, center + 2) + 1))
 
 
 def rerun_due(previous: dict, session: str, now: dt.datetime) -> bool:
@@ -76,7 +76,7 @@ def main() -> int:
             previous = {}
     now = dt.datetime.now(dt.timezone.utc)
     phase = session_phase(now)
-    if phase == "OFF_HOURS":
+    if phase in {"OFF_HOURS", "CLOSED"}:
         print(json.dumps({"state": "SKIPPED", "session": session, "phase": phase, "reason": "outside premarket and regular session"}), flush=True)
         return 0
     if not rerun_due(previous, session, now):

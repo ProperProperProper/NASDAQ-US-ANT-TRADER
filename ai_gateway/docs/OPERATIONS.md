@@ -14,20 +14,18 @@
 
 ## Persistent services
 
-For a local macOS deployment, configure:
+The US.ANT installation uses one Rust engine launch agent:
 
-- `com.multi-model-ai-gateway.gateway`: `~/Library/LaunchAgents/com.multi-model-ai-gateway.gateway.plist`
-- `com.multi-model-ai-gateway.mlx`: an MLX service configured for your machine
-- gateway startup: `./target/release/multi-model-gateway serve`
-- logs: configure stdout and stderr paths in your service manager
+- `com.local.us-ant-engine`: `~/Library/LaunchAgents/com.local.us-ant-engine.plist`
+- the engine supervises the paper bot, research scheduler, gateway, and MLX Sentinel
+- the local plist supplies the verified `US_ANT_PAPER_ACCOUNT_ID`
+- logs: `../logs/trading-engine.err` and each worker's local log
 
 Check or restart them:
 
 ```sh
-launchctl print gui/$(id -u)/com.multi-model-ai-gateway.gateway
-launchctl print gui/$(id -u)/com.multi-model-ai-gateway.mlx
-launchctl kickstart -k gui/$(id -u)/com.multi-model-ai-gateway.mlx
-launchctl kickstart -k gui/$(id -u)/com.multi-model-ai-gateway.gateway
+launchctl print gui/$(id -u)/com.local.us-ant-engine
+./target/release/trading_engine status
 ```
 
 ## Key handling
@@ -45,8 +43,8 @@ macOS Keychain account: your macOS username
 
 If `/v1/models` works but a completion hangs:
 
-1. inspect `logs/gateway-mlx.err` for model-load errors;
-2. restart `com.multi-model-ai-gateway.mlx`;
+1. inspect `../logs/mlx-sentinel.err` for model-load errors;
+2. inspect `../logs/trading-engine.err` for worker restart messages;
 3. wait for `/v1/models` to return the configured model;
 4. test `/v1/chat/completions` directly on port 8081;
 5. retest the gateway on port 8788.

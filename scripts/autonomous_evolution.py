@@ -115,7 +115,7 @@ def score(module, bars, parameters):
     _, trades, data = module.run(bars, parameters, 100_000.0, 0.95, 2.0, 0.0)
     return module.stats(trades, data, 100_000.0)
 results = {}
-for interval in range(1, 22):
+for interval in range(1, 11):
     bars = aggregate_us_session(frame, interval)
     old = score(baseline, bars, params)
     new = score(candidate, bars, params)
@@ -126,12 +126,12 @@ old_mean = sum(item["baseline"]["total_return_pct"] for item in results.values()
 new_mean = sum(item["candidate"]["total_return_pct"] for item in results.values()) / len(results)
 improved = sum(item["candidate"]["total_return_pct"] > item["baseline"]["total_return_pct"] for item in results.values())
 print(json.dumps({"sessions": 5, "intervals": list(results), "results": results, "improved_intervals": improved, "best_baseline_return_pct": old_best, "best_candidate_return_pct": new_best, "mean_baseline_return_pct": old_mean, "mean_candidate_return_pct": new_mean}, default=str))
-if improved < 11:
-    raise SystemExit("candidate does not improve a majority of the 1m-21m intervals")
+if improved < 6:
+    raise SystemExit("candidate does not improve a majority of the 1m-10m intervals")
 if new_mean <= old_mean:
-    raise SystemExit("candidate does not improve mean return across the 1m-21m interval competition")
+    raise SystemExit("candidate does not improve mean return across the 1m-10m interval competition")
 if new_best < old_best:
-    raise SystemExit("candidate reduces the best result across the 1m-21m interval competition")
+    raise SystemExit("candidate reduces the best result across the 1m-10m interval competition")
 """
     result = subprocess.run(
         [sys.executable, "-c", script, str(ROOT / "quant_dashboard.sqlite3"),
@@ -157,7 +157,7 @@ def main() -> int:
     current = (ROOT / "strategy_57pct.py").read_text()
     prompt = f"""You are the strategy mutation worker for a paper-only US.ANT system.
 The research contract is fixed: fetch/cache only 1-minute candles, locally aggregate
-and test every interval from 1m through 21m, and use only the latest five completed
+and test every interval from 1m through 10m, and use only the latest five completed
 US sessions. The deterministic evaluator owns PnL; the AI must not invent results.
 The safe search space includes grid_lookback integers 5..240, grid_intervals
 integers 2..20, four supported entry modes, and four supported exit modes.
@@ -174,9 +174,9 @@ Current strategy source:
         (run_dir / "proposal.diff").write_text(proposed)
         review = ask(f"""Review this proposed strategy-code diff for a paper-only US.ANT bot.
 The research contract is 1-minute source candles, local aggregation across every 1m
-through 21m interval, and exactly the latest five completed sessions. Check correctness,
+through 10m interval, and exactly the latest five completed sessions. Check correctness,
 regression risk, look-ahead bias, unsafe execution changes, and whether it can improve
-the mean return and a majority of the 1m-21m intervals without reducing the best result.
+the mean return and a majority of the 1m-10m intervals without reducing the best result.
 Reply with exactly APPROVE or REJECT followed by reasons.
 DIFF:
 {proposed}""")
@@ -201,7 +201,7 @@ DIFF:
                 git("merge", "--ff-only", branch, cwd=ROOT)
             finally:
                 git("worktree", "remove", "--force", str(worktree), check=False)
-        deploy = subprocess.run(["/bin/launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.local.nasdaq-paper-bot"], text=True, capture_output=True, check=False)
+        deploy = subprocess.run([str(ROOT / "ai_gateway/target/release/trading_engine"), "bot-restart"], text=True, capture_output=True, check=False)
         if deploy.returncode:
             raise RuntimeError(f"paper bot hot-swap failed: {deploy.stderr.strip()}")
         (run_dir / "result.json").write_text(json.dumps({"state": "DEPLOYED", "run_id": run_id, "branch": branch, "paper_only": True}, indent=2) + "\n")

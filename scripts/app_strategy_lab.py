@@ -218,7 +218,7 @@ def main() -> int:
             local_proposals = []
             if client:
                 for agent in range(max(1, args.agents)):
-                    proposal = ask_agent(client, None, "nvidia", profile, parents, ["explorer", "critic", "risk reviewer"][agent % 3])
+                    proposal = ask_agent(client, None, "local", profile, parents, ["explorer", "critic", "risk reviewer"][agent % 3])
                     if proposal:
                         local_proposals.append(proposal)
             if antigravity:

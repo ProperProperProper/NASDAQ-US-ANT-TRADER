@@ -42,7 +42,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Multi-Model AI Gateway planner/worker/reviewer/reporter lab")
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--workers", type=int, default=3)
-    parser.add_argument("--provider", choices=["nvidia", "local", "auto"], default="nvidia")
+    parser.add_argument("--provider", choices=["nvidia", "local", "auto"], default="local")
     parser.add_argument("--gateway", default=os.environ.get("MULTI_MODEL_GATEWAY_URL", "http://127.0.0.1:8788"))
     parser.add_argument("--run-dir", type=Path, default=Path("lab_runs"))
     parser.add_argument("--dry-run", action="store_true")
