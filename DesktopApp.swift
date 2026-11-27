@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let progressLabel = NSTextField(labelWithString: "0%")
     let output = NSTextView()
     let symbolField = NSTextField(string: "US.ANT")
+    let multiSymbolField = NSTextField(string: "US.ANT,US.AAPL")
     var sweepProcess: Process?
     var sweepBuffer = ""
 
@@ -171,6 +172,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let sweepButton = button("Run 100k randomized + AI tests", #selector(startSweep))
         sweepButton.frame = NSMakeRect(18, 12, 245, 30)
         research.addSubview(sweepButton)
+        multiSymbolField.frame = NSMakeRect(275, 15, 210, 24)
+        multiSymbolField.placeholderString = "US.ANT,US.AAPL"
+        research.addSubview(multiSymbolField)
+        let multiButton = button("Test symbols 1–10m", #selector(startMultiSymbolTest))
+        multiButton.frame = NSMakeRect(495, 12, 165, 30)
+        research.addSubview(multiButton)
     }
 
     func runCommand(_ path: String, _ arguments: [String], completion: @escaping (Int32, String) -> Void) {
@@ -241,7 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let candidates = value["candidates"] as? Int ?? 0
                 let ai = value["ai"] as? Int ?? 0
                 let saved = value["saved"] as? Int ?? 0
-                self.sweepMetrics.stringValue = "Candidates: \(String(format: "%,d", candidates)) · AI proposals: \(ai) · Profitable saved: \(saved) · Run \(value["run"] as? String ?? "none")"
+                self.sweepMetrics.stringValue = "Candidates: \(candidates) · AI proposals: \(ai) · Profitable saved: \(saved) · Run \(value["run"] as? String ?? "none")"
                 if let rows = value["rows"] as? [String] {
                     self.output.string = "INTERVAL   RETURN       EQUITY       TRADES\n" + rows.joined(separator: "\n")
                 }
@@ -301,6 +308,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc func startMultiSymbolTest() {
+        if sweepProcess?.isRunning == true { return }
+        let symbols = multiSymbolField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !symbols.isEmpty else { return }
+        sweepStatus.stringValue = "Testing \(symbols) across 1–10 minute intervals…"
+        sweepMetrics.stringValue = "Four evaluator workers · paper research only"
+        progress.isIndeterminate = true
+        progress.startAnimation(nil)
+        output.string = "SYMBOL       INTERVAL   RETURN      DRAWDOWN    TRADES\n"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        let end = Date()
+        let start = Calendar.current.date(byAdding: .day, value: -30, to: end) ?? end
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withFullDate]
+        process.arguments = ["\(projectRoot)/scripts/multi_symbol_backtest.py", "--symbols", symbols,
+                             "--start", iso.string(from: start), "--end", iso.string(from: end), "--workers", "4"]
+        process.currentDirectoryURL = URL(fileURLWithPath: projectRoot)
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if !data.isEmpty, let text = String(data: data, encoding: .utf8) {
+                DispatchQueue.main.async { self.handleMultiSymbolChunk(text) }
+            }
+        }
+        process.terminationHandler = { task in
+            DispatchQueue.main.async {
+                self.progress.stopAnimation(nil)
+                self.progress.isIndeterminate = false
+                self.sweepStatus.stringValue = task.terminationStatus == 0 ? "Multi-symbol test complete" : "Multi-symbol test failed (exit \(task.terminationStatus))"
+            }
+        }
+        sweepBuffer = ""
+        sweepProcess = process
+        do { try process.run() } catch {
+            progress.stopAnimation(nil)
+            progress.isIndeterminate = false
+            sweepStatus.stringValue = "Could not start test: \(error.localizedDescription)"
+        }
+    }
+
+    func handleMultiSymbolChunk(_ text: String) {
+        sweepBuffer += text
+        let lines = sweepBuffer.components(separatedBy: "\n")
+        sweepBuffer = lines.last ?? ""
+        for line in lines.dropLast() {
+            guard let data = line.data(using: .utf8),
+                  let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                output.string += line + "\n"
+                continue
+            }
+            if value["status"] as? String == "COMPLETED" {
+                let symbol = value["symbol"] as? String ?? "?"
+                let interval = value["interval"] as? Int ?? 0
+                let result = value["total_return_pct"] as? Double ?? 0
+                let drawdown = value["max_drawdown_pct"] as? Double ?? 0
+                let trades = value["trades"] as? Int ?? 0
+                output.string += String(format: "%-12@ %2dm       %+7.3f%%    %+7.3f%%    %d\n", symbol as NSString, interval, result, drawdown, trades)
+            } else if value["state"] as? String == "FETCHING" {
+                sweepStatus.stringValue = "Fetching \(value["symbol"] as? String ?? "symbol")…"
+            } else if value["state"] as? String == "COMPLETED" {
+                let tested = value["tested"] as? Int ?? 0
+                sweepMetrics.stringValue = "Completed \(tested) symbol/interval tests · results saved locally"
+            }
+            output.scrollToEndOfDocument(nil)
+        }
+    }
+
     func launchSweep(root: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
@@ -343,7 +420,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let total = value["total"] as? Int ?? 100000
             let saved = value["profitable_saved"] as? Int ?? 0
             if value["tested"] != nil || value["profitable_saved"] != nil {
-                self.sweepMetrics.stringValue = "Candidates: \(String(format: "%,d", tested)) / \(String(format: "%,d", total)) · AI proposals: shown on completion · Profitable saved: \(saved)"
+                self.sweepMetrics.stringValue = "Candidates: \(tested) / \(total) · AI proposals: shown on completion · Profitable saved: \(saved)"
             }
             if let interval = value["interval"] as? String {
                 sweepStatus.stringValue = "Testing \(interval) · \(progressLabel.stringValue)"

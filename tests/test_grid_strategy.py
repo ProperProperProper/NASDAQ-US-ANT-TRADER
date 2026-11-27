@@ -14,6 +14,7 @@ from scripts.app_minute_interval_sweep import parse_intervals, promotion_gate, p
 from scripts.research_scheduler import session_phase
 from competition_bot import CompetitionBot, MAX_OPEN_POSITIONS, count_open_positions
 from trading_config import active_symbol, normalize_symbol, strategy_path
+from scripts.multi_symbol_backtest import parse_symbols as parse_backtest_symbols
 
 
 ET = ZoneInfo("America/New_York")
@@ -26,6 +27,9 @@ class GridStrategyTests(unittest.TestCase):
         self.assertNotEqual(strategy_path("US.ANT"), strategy_path("US.AAPL"))
         with self.assertRaises(ValueError):
             normalize_symbol("AU.BHP")
+
+    def test_multi_symbol_backtest_normalizes_and_deduplicates(self):
+        self.assertEqual(parse_backtest_symbols("ant, US.AAPL,us.ant"), ["US.ANT", "US.AAPL"])
 
     def candles(self):
         index = pd.date_range("2026-01-01", periods=12, freq="10min")

@@ -104,6 +104,12 @@ validates the Moomoo quote, and restarts with isolated symbol state. It refuses
 the change when the current or requested symbol has a position or active order.
 Each symbol has separate strategy, state, promotion, and research directories.
 
+The native app also accepts a comma-separated list such as `US.ANT,US.AAPL`
+for research. **Test symbols 1–10m** fetches each symbol's 1-minute candles,
+tests every interval from 1 through 10 with four evaluator workers, stores the
+individual runs in SQLite, and writes a ranked local summary under
+`multi_symbol_results/`. Testing does not change the active execution symbol.
+
 Use the native app or launchd service for normal operation. See
 [`docs/PAPER_BOT_OPERATIONS.md`](docs/PAPER_BOT_OPERATIONS.md) for checks and
 troubleshooting.

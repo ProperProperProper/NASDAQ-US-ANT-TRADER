@@ -35,8 +35,17 @@ def account_id() -> int:
 
 
 def process_count(fragment: str) -> int:
-    result = subprocess.run(["/bin/ps", "-axo", "command"], capture_output=True, text=True, check=False)
-    return sum(fragment in line and "session_monitor.py" not in line for line in result.stdout.splitlines())
+    result = subprocess.run(["/bin/ps", "-axo", "comm=,args="], capture_output=True, text=True, check=False)
+    count = 0
+    for line in result.stdout.splitlines():
+        fields = line.strip().split(None, 1)
+        if len(fields) != 2:
+            continue
+        _, arguments = fields
+        program = arguments.split(None, 1)[0] if arguments else ""
+        if Path(program).name.lower() in {"python", "python3"} and fragment in arguments and "session_monitor.py" not in arguments:
+            count += 1
+    return count
 
 
 def check() -> dict:
