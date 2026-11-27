@@ -196,7 +196,7 @@ def ai_candidates(interval: int) -> list[dict]:
     # Prefer native local inference, while allowing the gateway to fall back to
     # the configured hosted backend when the resource governor pauses MLX
     # during a four-core research batch.
-    mcp_request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "gateway_chat", "arguments": {"prompt": prompt, "provider": "auto", "max_tokens": 256}}}
+    mcp_request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "gateway_chat", "arguments": {"prompt": prompt, "provider": "auto", "max_tokens": 256, "qos": "background"}}}
     completed = subprocess.run(
         [sys.executable, str(ROOT / "ai_gateway/ai/mcp_server.py")],
         input=json.dumps(mcp_request) + "\n", capture_output=True, text=True, timeout=90, check=False,

@@ -58,9 +58,19 @@ impl Worker {
             .env("OMP_NUM_THREADS", &workers).env("OPENBLAS_NUM_THREADS", &workers)
             .env("MKL_NUM_THREADS", &workers).env("VECLIB_MAXIMUM_THREADS", &workers)
             .env("RESEARCH_WORKERS", &workers);
+        let is_research = self.name == "research";
         unsafe {
-            command.pre_exec(|| {
-                if setpgid(0, 0) == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
+            command.pre_exec(move || {
+                if setpgid(0, 0) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                #[cfg(target_os = "macos")]
+                if is_research {
+                    // Pin research scheduler and worker tree to Darwin E-cores / background QoS
+                    libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_BACKGROUND, 0);
+                    libc::setpriority(libc::PRIO_PROCESS, 0, 15);
+                }
+                Ok(())
             });
         }
         let child = command.spawn()?;

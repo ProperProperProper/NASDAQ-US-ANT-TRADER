@@ -49,6 +49,162 @@ const VERIFIED_FREE_NVIDIA_MODELS: &[&str] = &[
 ];
 const DASHBOARD: &str = include_str!("ui.html");
 
+#[cfg(target_os = "macos")]
+fn apply_thread_qos(is_background: bool) {
+    unsafe {
+        let qos_class = if is_background {
+            libc::qos_class_t::QOS_CLASS_BACKGROUND
+        } else {
+            libc::qos_class_t::QOS_CLASS_USER_INTERACTIVE
+        };
+        libc::pthread_set_qos_class_self_np(qos_class, 0);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_thread_qos(_is_background: bool) {}
+
+struct QosGuard {
+    active: bool,
+}
+
+impl QosGuard {
+    fn new(is_background: bool) -> Self {
+        if is_background {
+            apply_thread_qos(true);
+            Self { active: true }
+        } else {
+            Self { active: false }
+        }
+    }
+}
+
+impl Drop for QosGuard {
+    fn drop(&mut self) {
+        if self.active {
+            apply_thread_qos(false);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn clamp_mlx_sentinel(is_background: bool) {
+    tokio::task::spawn_blocking(move || {
+        if let Ok(output) = std::process::Command::new("pgrep")
+            .args(["-f", "mlx_sentinel.server"])
+            .output()
+        {
+            if output.status.success() {
+                let pids = String::from_utf8_lossy(&output.stdout);
+                for pid in pids.lines().map(str::trim).filter(|s| !s.is_empty()) {
+                    let mut cmd = std::process::Command::new("/usr/sbin/taskpolicy");
+                    if is_background {
+                        cmd.args(["-b", "-c", "background", "-p", pid]);
+                    } else {
+                        cmd.args(["-B", "-p", pid]);
+                    }
+                    let _ = cmd.output();
+                }
+            }
+        }
+    });
+}
+
+#[cfg(not(target_os = "macos"))]
+fn clamp_mlx_sentinel(_is_background: bool) {}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ThermodynamicState {
+    thermal_pressure_elevated: bool,
+    load_avg_1m: f64,
+    pmset_warning: bool,
+    pmset_summary: String,
+    offload_active: bool,
+}
+
+fn check_thermodynamic_state() -> ThermodynamicState {
+    let mut loadavg = [0.0f64; 3];
+    let _ = unsafe { libc::getloadavg(loadavg.as_mut_ptr(), 3) };
+    let load_1m = loadavg[0];
+
+    let pmset_output = std::process::Command::new("/usr/bin/pmset")
+        .args(["-g", "therm"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+
+    let mut pmset_warning = false;
+    let mut summary = Vec::new();
+    for line in pmset_output.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("Note: No") {
+            continue;
+        }
+        if trimmed.contains("CPU_Scheduler_Limit") {
+            if let Some(val_str) = trimmed.split('=').nth(1).or_else(|| trimmed.split_whitespace().last()) {
+                if let Ok(val) = val_str.trim().parse::<u32>() {
+                    if val < 100 {
+                        pmset_warning = true;
+                        summary.push(format!("Scheduler Limit: {}%", val));
+                    }
+                }
+            }
+        } else if trimmed.contains("CPU_Speed_Limit") {
+            if let Some(val_str) = trimmed.split('=').nth(1).or_else(|| trimmed.split_whitespace().last()) {
+                if let Ok(val) = val_str.trim().parse::<u32>() {
+                    if val < 100 {
+                        pmset_warning = true;
+                        summary.push(format!("Speed Limit: {}%", val));
+                    }
+                }
+            }
+        } else if trimmed.contains("Thermal_Warning_Level") {
+            pmset_warning = true;
+            summary.push(trimmed.to_string());
+        }
+    }
+
+    let load_threshold = env::var("MULTI_MODEL_GATEWAY_THERMAL_LOAD_THRESHOLD")
+        .ok()
+        .and_then(|v| v.parse::<f64>().ok())
+        .unwrap_or(8.0);
+
+    let thermal_pressure_elevated = pmset_warning || load_1m >= load_threshold;
+    ThermodynamicState {
+        thermal_pressure_elevated,
+        load_avg_1m: (load_1m * 100.0).round() / 100.0,
+        pmset_warning,
+        pmset_summary: if summary.is_empty() {
+            "nominal".to_string()
+        } else {
+            summary.join(", ")
+        },
+        offload_active: thermal_pressure_elevated,
+    }
+}
+
+fn request_qos(req: &ChatRequest, headers: &HeaderMap) -> &'static str {
+    if let Some(val) = headers.get("x-qos").and_then(|v| v.to_str().ok()) {
+        if val.eq_ignore_ascii_case("background") {
+            return "background";
+        }
+        if val.eq_ignore_ascii_case("interactive") {
+            return "interactive";
+        }
+    }
+    if let Some(extra) = req.extra_body.as_ref().and_then(Value::as_object) {
+        if let Some(val) = extra.get("qos").and_then(Value::as_str) {
+            if val.eq_ignore_ascii_case("background") {
+                return "background";
+            }
+            if val.eq_ignore_ascii_case("interactive") {
+                return "interactive";
+            }
+        }
+    }
+    "interactive"
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "multi-model-gateway",
@@ -1038,7 +1194,7 @@ async fn execute_subagent(state: &AppState, args: &Value) -> String {
         "You are a bounded Multi-Model AI Gateway {role} subagent. Do not call tools or spawn agents. Return a report with role, assumptions, evidence, files inspected, proposed changes, tests, and risks. Do not claim actions you did not perform."
     );
     let payload = json!({"model":"auto","messages":[{"role":"system","content":system},{"role":"user","content":bounded}],"max_tokens":1200});
-    match call_upstream(state, provider, payload, None).await {
+    match call_upstream(state, provider, payload, None, true).await {
         Ok(response) => response
             .get("choices")
             .and_then(Value::as_array)
@@ -1057,9 +1213,13 @@ async fn call_upstream(
     provider: &str,
     mut req: Value,
     model_override: Option<&str>,
+    is_background: bool,
 ) -> Result<Value, String> {
     if provider == "apple" {
-        return call_apple(state, req).await;
+        return call_apple(state, req, is_background).await;
+    }
+    if provider == "local" {
+        clamp_mlx_sentinel(is_background);
     }
     let _nvidia_serial = if provider == "nvidia" {
         Some(state.nvidia_serial.lock().await)
@@ -1174,7 +1334,7 @@ async fn call_upstream(
     Ok(value)
 }
 
-async fn call_apple(state: &AppState, req: Value) -> Result<Value, String> {
+async fn call_apple(state: &AppState, req: Value, is_background: bool) -> Result<Value, String> {
     let prompt = req
         .get("messages")
         .and_then(Value::as_array)
@@ -1194,7 +1354,14 @@ async fn call_apple(state: &AppState, req: Value) -> Result<Value, String> {
         })
         .unwrap_or_default();
     let request = json!({"prompt":prompt,"mode":state.cfg.apple_mode,"instructions":"You are Multi-Model AI Gateway's Apple-native application-development assistant. Give concise, technically useful answers. Do not claim access to local tools unless they are explicitly provided by the gateway."});
-    let mut child = TokioCommand::new(&state.cfg.apple_bin)
+    let mut command = if is_background {
+        let mut tp = TokioCommand::new("/usr/sbin/taskpolicy");
+        tp.args(["-b", "-c", "background", &state.cfg.apple_bin]);
+        tp
+    } else {
+        TokioCommand::new(&state.cfg.apple_bin)
+    };
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1243,11 +1410,15 @@ async fn stream_upstream(
     provider: &str,
     mut req: Value,
     model_override: Option<&str>,
+    is_background: bool,
 ) -> Result<Response, String> {
     if provider == "apple" {
         return Err(
             "Apple Foundation Models streaming bridge is not enabled for this request".into(),
         );
+    }
+    if provider == "local" {
+        clamp_mlx_sentinel(is_background);
     }
     let _nvidia_serial = if provider == "nvidia" {
         Some(state.nvidia_serial.lock().await)
@@ -1339,7 +1510,12 @@ async fn stream_upstream(
         .map_err(|error| error.to_string())
 }
 
-async fn agent_call(state: &AppState, provider: &str, mut payload: Value) -> Result<Value, String> {
+async fn agent_call(
+    state: &AppState,
+    provider: &str,
+    mut payload: Value,
+    is_background: bool,
+) -> Result<Value, String> {
     if let Value::Object(ref mut body) = payload {
         body.insert("tools".into(), agent_tools());
         body.insert("tool_choice".into(), json!("auto"));
@@ -1348,7 +1524,7 @@ async fn agent_call(state: &AppState, provider: &str, mut payload: Value) -> Res
         }
     }
     for _ in 0..6 {
-        let response = call_upstream(state, provider, payload.clone(), None).await?;
+        let response = call_upstream(state, provider, payload.clone(), None, is_background).await?;
         let message = response
             .get("choices")
             .and_then(|choices| choices.get(0))
@@ -1402,11 +1578,12 @@ async fn dispatch_call(
     provider: &str,
     payload: Value,
     agent: bool,
+    is_background: bool,
 ) -> Result<Value, String> {
     let result = if agent && provider == "nvidia" {
-        agent_call(state, provider, payload.clone()).await
+        agent_call(state, provider, payload.clone(), is_background).await
     } else {
-        call_upstream(state, provider, payload.clone(), None).await
+        call_upstream(state, provider, payload.clone(), None, is_background).await
     };
     if result.is_err()
         && provider == "nvidia"
@@ -1423,9 +1600,9 @@ async fn dispatch_call(
                 body.insert("model".into(), json!(fallback));
             }
             return if agent {
-                agent_call(state, provider, fallback_payload).await
+                agent_call(state, provider, fallback_payload, is_background).await
             } else {
-                call_upstream(state, provider, fallback_payload, Some(&fallback)).await
+                call_upstream(state, provider, fallback_payload, Some(&fallback), is_background).await
             };
         }
     }
@@ -1436,8 +1613,9 @@ async fn dispatch_stream(
     state: &AppState,
     provider: &str,
     payload: Value,
+    is_background: bool,
 ) -> Result<Response, String> {
-    let result = stream_upstream(state, provider, payload.clone(), None).await;
+    let result = stream_upstream(state, provider, payload.clone(), None, is_background).await;
     if result.is_err()
         && provider == "nvidia"
         && !result
@@ -1451,7 +1629,7 @@ async fn dispatch_stream(
         if let Value::Object(ref mut body) = fallback_payload {
             body.insert("model".into(), json!(fallback));
         }
-        return stream_upstream(state, provider, fallback_payload, Some(&fallback)).await;
+        return stream_upstream(state, provider, fallback_payload, Some(&fallback), is_background).await;
     }
     result
 }
@@ -1461,6 +1639,10 @@ async fn chat(
     headers: HeaderMap,
     Json(req): Json<ChatRequest>,
 ) -> Result<Response, (axum::http::StatusCode, Json<Value>)> {
+    let qos = request_qos(&req, &headers);
+    let is_background = qos == "background";
+    let _qos_guard = QosGuard::new(is_background);
+
     let agent = agent_enabled(&req);
     let security = state
         .security
@@ -1482,24 +1664,34 @@ async fn chat(
         .and_then(|body| body.get("bounded_controller"))
         .and_then(Value::as_bool)
         .unwrap_or(false);
+
+    let thermo = check_thermodynamic_state();
+    let thermal_offload = thermo.thermal_pressure_elevated && nvidia_healthy(&state).await;
+
     let preferred = if agent {
         // Local GPT-OSS is the default planner; explicit cloud/model fallback
         // remains available for agent requests that need it.
         "local"
     } else if selected == "auto" {
-        let local_load = state.local_inflight.load(std::sync::atomic::Ordering::Relaxed);
-        let nvidia_load = state.nvidia_inflight.load(std::sync::atomic::Ordering::Relaxed);
-        let learned = state.router_model.as_ref().and_then(|model| learned_provider(model, &req)).filter(|prediction| {
-            let minimum = env::var("MULTI_MODEL_GATEWAY_ROUTER_MIN_CONFIDENCE").ok().and_then(|value| value.parse::<f64>().ok()).unwrap_or(0.65);
-            prediction.confidence >= minimum
-        });
-        match learned.as_ref().map(|prediction| prediction.provider.as_str()) {
-            Some("apple") => "apple",
-            Some("nvidia") => "nvidia",
-            Some("local") => "local",
-            _ if score <= state.cfg.local_max_difficulty && local_load <= nvidia_load + 1 => "local",
-            _ => "nvidia",
+        if thermal_offload {
+            "nvidia"
+        } else {
+            let local_load = state.local_inflight.load(std::sync::atomic::Ordering::Relaxed);
+            let nvidia_load = state.nvidia_inflight.load(std::sync::atomic::Ordering::Relaxed);
+            let learned = state.router_model.as_ref().and_then(|model| learned_provider(model, &req)).filter(|prediction| {
+                let minimum = env::var("MULTI_MODEL_GATEWAY_ROUTER_MIN_CONFIDENCE").ok().and_then(|value| value.parse::<f64>().ok()).unwrap_or(0.65);
+                prediction.confidence >= minimum
+            });
+            match learned.as_ref().map(|prediction| prediction.provider.as_str()) {
+                Some("apple") => "apple",
+                Some("nvidia") => "nvidia",
+                Some("local") => "local",
+                _ if score <= state.cfg.local_max_difficulty && local_load <= nvidia_load + 1 => "local",
+                _ => "nvidia",
+            }
         }
+    } else if selected == "local" && thermal_offload && env::var("MULTI_MODEL_GATEWAY_ALLOW_THERMAL_OVERRIDE").map(|v| v != "0" && v != "false").unwrap_or(true) {
+        "nvidia"
     } else {
         selected.as_str()
     };
@@ -1559,10 +1751,10 @@ async fn chat(
         let started = Instant::now();
         let result = match preferred {
             "local" if local_healthy(&state).await => {
-                dispatch_stream(&state, "local", payload.clone()).await
+                dispatch_stream(&state, "local", payload.clone(), is_background).await
             }
             "nvidia" if nvidia_healthy(&state).await => {
-                dispatch_stream(&state, "nvidia", payload.clone()).await
+                dispatch_stream(&state, "nvidia", payload.clone(), is_background).await
             }
             "apple" => Err("Apple streaming is not supported by the JSON-lines bridge; use a non-streaming request".into()),
             _ => Err("selected provider is unavailable".into()),
@@ -1581,7 +1773,7 @@ async fn chat(
                 if !can_try {
                     return Err((axum::http::StatusCode::BAD_GATEWAY, Json(json!({"error":{"message":first}}))));
                 }
-                dispatch_stream(&state, alternate, payload).await.map_err(|error| (axum::http::StatusCode::BAD_GATEWAY, Json(json!({"error":{"message":error}}))))?
+                dispatch_stream(&state, alternate, payload, is_background).await.map_err(|error| (axum::http::StatusCode::BAD_GATEWAY, Json(json!({"error":{"message":error}}))))?
             }
         };
         let elapsed = started.elapsed().as_secs_f64() * 1000.0;
@@ -1592,21 +1784,21 @@ async fn chat(
     let result = match preferred {
         "local" => {
             if local_healthy(&state).await {
-                dispatch_call(&state, "local", payload.clone(), agent).await
+                dispatch_call(&state, "local", payload.clone(), agent, is_background).await
             } else {
                 Err("MLX is unavailable".into())
             }
         }
         "nvidia" => {
             if nvidia_healthy(&state).await {
-                dispatch_call(&state, "nvidia", payload.clone(), agent).await
+                dispatch_call(&state, "nvidia", payload.clone(), agent, is_background).await
             } else {
                 Err("NVIDIA_API_KEY is not configured".into())
             }
         }
         "apple" => {
             if apple_healthy(&state).await {
-                dispatch_call(&state, "apple", payload.clone(), agent).await
+                dispatch_call(&state, "apple", payload.clone(), agent, is_background).await
             } else {
                 Err("Apple Foundation Models are unavailable".into())
             }
@@ -1645,7 +1837,7 @@ async fn chat(
                 ));
             }
             (
-                dispatch_call(&state, alternate, payload, agent)
+                dispatch_call(&state, alternate, payload, agent, is_background)
                     .await
                     .map_err(|e| {
                         (
@@ -1687,7 +1879,13 @@ async fn chat(
         }
         object.insert(
             "_multi_model_gateway".into(),
-            json!({"provider":used,"difficulty":score,"latency_ms":elapsed.round()}),
+            json!({
+                "provider": used,
+                "difficulty": score,
+                "latency_ms": elapsed.round(),
+                "qos": qos,
+                "thermodynamic_offload": thermal_offload,
+            }),
         );
     }
     Ok(Json(response).into_response())
@@ -1727,8 +1925,9 @@ async fn status(State(state): State<AppState>) -> Json<Value> {
     } else {
         apple_on_device
     };
+    let thermo = check_thermodynamic_state();
     Json(
-        json!({"name":"Multi-Model AI Gateway","access_mode":env::var("MULTI_MODEL_GATEWAY_ACCESS_MODE").unwrap_or_else(|_| "readonly".into()),"agent_tools":capability_enabled("MULTI_MODEL_GATEWAY_ENABLE_AGENT_TOOLS"),"file_writes":capability_enabled("MULTI_MODEL_GATEWAY_ENABLE_FILE_WRITES"),"shell_commands":capability_enabled("MULTI_MODEL_GATEWAY_ENABLE_COMMANDS"),"access_scope":"repository-only when tools are enabled","repository":github_status(),"routing":"difficulty_and_load","learned_router":state.router_model.is_some(),"local_max_difficulty":state.cfg.local_max_difficulty,"context_engineering":state.context.status(),"graphify":{"nodes":state.graph.nodes.len(),"edges":state.graph.edges.len(),"query":"POST /api/graph/query","html":"/graph.html"},"backends":{"mlx":{"url":state.cfg.local_url,"healthy":local_healthy(&state).await,"model":state.cfg.local_model,"inflight":state.local_inflight.load(std::sync::atomic::Ordering::Relaxed)},"apple":{"healthy":apple_healthy,"on_device_available":apple_on_device,"private_cloud_available":apple_private_cloud,"private_cloud_entitled":apple_private_cloud_entitled,"mode":state.cfg.apple_mode,"bridge":state.cfg.apple_bin,"inflight":state.apple_inflight.load(std::sync::atomic::Ordering::Relaxed)},"nvidia":{"url":state.cfg.nvidia_url,"configured":nvidia_healthy(&state).await,"model":state.cfg.nvidia_model,"fast_model":state.cfg.nvidia_fast_model,"hard_model":state.cfg.nvidia_hard_model,"free_models":state.cfg.nvidia_free_models,"inflight":state.nvidia_inflight.load(std::sync::atomic::Ordering::Relaxed)}} ,"exo":{"url":env::var("EXO_BASE_URL").unwrap_or_default(),"rdma":"MLX JACCL over Thunderbolt 5"},"stats":&*stats}),
+        json!({"name":"Multi-Model AI Gateway","access_mode":env::var("MULTI_MODEL_GATEWAY_ACCESS_MODE").unwrap_or_else(|_| "readonly".into()),"agent_tools":capability_enabled("MULTI_MODEL_GATEWAY_ENABLE_AGENT_TOOLS"),"file_writes":capability_enabled("MULTI_MODEL_GATEWAY_ENABLE_FILE_WRITES"),"shell_commands":capability_enabled("MULTI_MODEL_GATEWAY_ENABLE_COMMANDS"),"access_scope":"repository-only when tools are enabled","repository":github_status(),"routing":"difficulty_and_load","learned_router":state.router_model.is_some(),"local_max_difficulty":state.cfg.local_max_difficulty,"thermodynamic_state":thermo,"context_engineering":state.context.status(),"graphify":{"nodes":state.graph.nodes.len(),"edges":state.graph.edges.len(),"query":"POST /api/graph/query","html":"/graph.html"},"backends":{"mlx":{"url":state.cfg.local_url,"healthy":local_healthy(&state).await,"model":state.cfg.local_model,"inflight":state.local_inflight.load(std::sync::atomic::Ordering::Relaxed)},"apple":{"healthy":apple_healthy,"on_device_available":apple_on_device,"private_cloud_available":apple_private_cloud,"private_cloud_entitled":apple_private_cloud_entitled,"mode":state.cfg.apple_mode,"bridge":state.cfg.apple_bin,"inflight":state.apple_inflight.load(std::sync::atomic::Ordering::Relaxed)},"nvidia":{"url":state.cfg.nvidia_url,"configured":nvidia_healthy(&state).await,"model":state.cfg.nvidia_model,"fast_model":state.cfg.nvidia_fast_model,"hard_model":state.cfg.nvidia_hard_model,"free_models":state.cfg.nvidia_free_models,"inflight":state.nvidia_inflight.load(std::sync::atomic::Ordering::Relaxed)}} ,"exo":{"url":env::var("EXO_BASE_URL").unwrap_or_default(),"rdma":"MLX JACCL over Thunderbolt 5"},"stats":&*stats}),
     )
 }
 
@@ -1963,4 +2162,62 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_request_qos_header() {
+        let req = ChatRequest {
+            model: Some("auto".into()),
+            messages: vec![],
+            stream: false,
+            extra_body: None,
+            rest: serde_json::Map::new(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert("x-qos", "background".parse().unwrap());
+        assert_eq!(request_qos(&req, &headers), "background");
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-qos", "interactive".parse().unwrap());
+        assert_eq!(request_qos(&req, &headers), "interactive");
+
+        let empty_headers = HeaderMap::new();
+        assert_eq!(request_qos(&req, &empty_headers), "interactive");
+    }
+
+    #[test]
+    fn test_request_qos_extra_body() {
+        let req = ChatRequest {
+            model: Some("auto".into()),
+            messages: vec![],
+            stream: false,
+            extra_body: Some(json!({"qos": "background"})),
+            rest: serde_json::Map::new(),
+        };
+        let headers = HeaderMap::new();
+        assert_eq!(request_qos(&req, &headers), "background");
+    }
+
+    #[test]
+    fn test_check_thermodynamic_state() {
+        let state = check_thermodynamic_state();
+        assert!(state.load_avg_1m >= 0.0);
+        assert!(!state.pmset_summary.is_empty());
+    }
+
+    #[test]
+    fn test_thread_qos_guard() {
+        {
+            let _guard = QosGuard::new(true);
+            assert!(_guard.active);
+        }
+        {
+            let _guard = QosGuard::new(false);
+            assert!(!_guard.active);
+        }
+    }
 }
