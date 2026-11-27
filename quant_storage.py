@@ -75,6 +75,32 @@ def connect(path: Path = DB_PATH) -> sqlite3.Connection:
             event_type TEXT NOT NULL,
             payload_json TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS exit_evaluations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            symbol TEXT NOT NULL,
+            position_shares REAL NOT NULL,
+            avg_cost REAL NOT NULL,
+            price_t0 REAL NOT NULL,
+            unrealized_pl REAL NOT NULL,
+            return_pct REAL NOT NULL,
+            hold_minutes REAL NOT NULL,
+            features_json TEXT NOT NULL,
+            predicted_action TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            signal_type TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            model TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            price_t1m REAL,
+            price_t5m REAL,
+            price_t15m REAL,
+            optimal_action TEXT,
+            counterfactual_reward REAL,
+            resolved_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS exit_evaluations_lookup ON exit_evaluations(symbol, created_at);
+        CREATE INDEX IF NOT EXISTS exit_evaluations_unresolved ON exit_evaluations(resolved_at);
         """
     )
     return db
@@ -161,3 +187,54 @@ def save_execution_event(event_type: str, symbol: str | None, payload: Any) -> N
         db.commit()
     finally:
         db.close()
+
+
+def save_exit_evaluation(data: dict[str, Any]) -> int:
+    db = connect()
+    try:
+        cur = db.execute(
+            """INSERT INTO exit_evaluations
+            (created_at, symbol, position_shares, avg_cost, price_t0, unrealized_pl, return_pct,
+             hold_minutes, features_json, predicted_action, confidence, signal_type, reason,
+             model, provider)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                data.get("created_at") or datetime.now(timezone.utc).isoformat(),
+                normalize_symbol(data["symbol"]),
+                float(data.get("position_shares", 0.0)),
+                float(data.get("avg_cost", 0.0)),
+                float(data.get("price_t0", 0.0)),
+                float(data.get("unrealized_pl", 0.0)),
+                float(data.get("return_pct", 0.0)),
+                float(data.get("hold_minutes", 0.0)),
+                _json(data.get("features", {})),
+                str(data.get("predicted_action", "HOLD")),
+                float(data.get("confidence", 0.0)),
+                str(data.get("signal_type", "HOLD")),
+                str(data.get("reason", "")),
+                str(data.get("model", "auto")),
+                str(data.get("provider", "local")),
+            ),
+        )
+        db.commit()
+        return int(cur.lastrowid)
+    finally:
+        db.close()
+
+
+def load_historical_analogues(symbol: str, limit: int = 3) -> list[dict[str, Any]]:
+    normalized = normalize_symbol(symbol)
+    db = connect()
+    try:
+        rows = db.execute(
+            """SELECT symbol, return_pct, hold_minutes, predicted_action, optimal_action,
+                      counterfactual_reward, signal_type, reason, created_at
+               FROM exit_evaluations
+               WHERE symbol = ? AND resolved_at IS NOT NULL
+               ORDER BY id DESC LIMIT ?""",
+            (normalized, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        db.close()
+

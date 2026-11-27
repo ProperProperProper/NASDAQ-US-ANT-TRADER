@@ -1,18 +1,18 @@
 {
-  "interval": 9,
+  "interval": 8,
   "mode": "SIMULATE",
   "params": {
     "entry_mode": "any_grid_cross",
-    "exit_mode": "bottom_breakdown",
-    "grid_intervals": 7,
-    "grid_lookback": 39,
-    "open_delay_minutes": 0,
+    "exit_mode": "lower_half_breakdown",
+    "grid_intervals": 8,
+    "grid_lookback": 5,
+    "open_delay_minutes": 8,
     "stop_loss_pct": 0.1324,
-    "take_profit_pct": 0.007,
-    "trailing_activation_pct": 0.0,
-    "trailing_stop_pct": 0.0
+    "take_profit_pct": 0.0056,
+    "trailing_activation_pct": 0.02,
+    "trailing_stop_pct": 0.015
   },
-  "run_id": "US-MRNA-MINUTE-20261128-015524",
+  "run_id": "US-MRNA-MINUTE-20261128-030454",
   "symbol": "US.MRNA",
-  "updated_at": "2026-11-27T15:32:56.061343+00:00"
+  "updated_at": "2026-11-27T16:06:27.228118+00:00"
 }
