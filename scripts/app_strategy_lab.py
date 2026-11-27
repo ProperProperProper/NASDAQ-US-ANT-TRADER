@@ -71,7 +71,10 @@ class AntigravityOptimizer(MCPClient):
 
 def write_live_strategy(symbol: str, interval: int, params: dict, run_id: str) -> dict:
     path = strategy_path(symbol)
-    payload = {"symbol": symbol, "interval": int(interval), "params": dict(params),
+    paper_params = dict(params)
+    if "take_profit_pct" in paper_params:
+        paper_params["take_profit_pct"] = round(float(paper_params["take_profit_pct"]) * 0.70, 6)
+    payload = {"symbol": symbol, "interval": int(interval), "params": paper_params,
                "run_id": run_id, "updated_at": pd.Timestamp.now(tz="UTC").isoformat(),
                "mode": "SIMULATE"}
     temporary = path.with_name(path.name + ".tmp")

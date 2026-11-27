@@ -20,6 +20,7 @@ BASELINE = {
     "stop_loss_pct": 0.1324,
     "trailing_activation_pct": 0.0,
     "trailing_stop_pct": 0.0,
+    "open_delay_minutes": 5,
 }
 GRID_BASELINE = BASELINE
 ALLOCATION = 0.95
@@ -35,6 +36,7 @@ def validate_strategy_params(params: dict | None) -> dict:
     try:
         merged["grid_lookback"] = int(merged["grid_lookback"])
         merged["grid_intervals"] = int(merged["grid_intervals"])
+        merged["open_delay_minutes"] = int(merged.get("open_delay_minutes", 5))
         for key in ("take_profit_pct", "stop_loss_pct", "trailing_activation_pct", "trailing_stop_pct"):
             merged[key] = float(merged[key])
     except (TypeError, ValueError, OverflowError) as exc:
@@ -43,6 +45,8 @@ def validate_strategy_params(params: dict | None) -> dict:
         raise ValueError("grid_lookback must be between 2 and 240")
     if not 2 <= merged["grid_intervals"] <= 20:
         raise ValueError("grid_intervals must be between 2 and 20")
+    if not 0 <= merged["open_delay_minutes"] <= 60:
+        raise ValueError("open_delay_minutes must be between 0 and 60")
     if merged["entry_mode"] not in ENTRY_MODES:
         raise ValueError(f"unsupported entry_mode: {merged['entry_mode']}")
     if merged["exit_mode"] not in EXIT_MODES:
@@ -137,7 +141,8 @@ def add_features(candles: pd.DataFrame, params: dict = BASELINE) -> pd.DataFrame
         "bottom_breakdown": (x["open_line"] < x["grid_bottom"]) & (previous_open >= x["grid_bottom"].shift(1)),
         "lower_half_breakdown": ((x["open_line"] < x["grid_lower_mid"]) & (previous_open >= x["grid_lower_mid"].shift(1))) | ((x["open_line"] < x["grid_bottom"]) & (previous_open >= x["grid_bottom"].shift(1))),
     }
-    x["buy_signal"] = up_by_line.get(entry_mode, up_by_line["any_grid_cross"])
+    bullish_candle = x["close_line"] >= x["open_line"]
+    x["buy_signal"] = up_by_line.get(entry_mode, up_by_line["any_grid_cross"]) & bullish_candle
     x["close_signal"] = down_by_line.get(exit_mode, down_by_line["any_grid_cross_down"])
     x.attrs["entry_mode"] = entry_mode
     x.attrs["exit_mode"] = exit_mode
@@ -159,14 +164,26 @@ def strategy_signal(frame: pd.DataFrame, params: dict = BASELINE) -> dict:
     if len(x) < 2:
         raise ValueError("not enough candles for the grid")
     bar = x.iloc[-1]
+    open_delay_minutes = max(0, int(params.get("open_delay_minutes", 5)))
+    delay_h = (30 + open_delay_minutes) // 60
+    delay_m = (30 + open_delay_minutes) % 60
+    from datetime import time as dt_time
+    earliest_entry = dt_time(9 + delay_h, delay_m)
+    bar_dt = pd.Timestamp(x.index[-1])
+    bar_time = bar_dt.time()
+    if dt_time(9, 30) <= bar_time < dt_time(10, 30):
+        entry_allowed = bar_time >= earliest_entry
+    else:
+        entry_allowed = True
     return {"bar": str(x.index[-1]), "open": float(bar.open), "close": float(bar.close),
             "grid_top": float(bar.grid_top), "grid_upper_mid": float(bar.grid_upper_mid),
             "grid_lower_mid": float(bar.grid_lower_mid), "grid_bottom": float(bar.grid_bottom),
             "buy_signal": bool(bar.buy_signal), "close_signal": bool(bar.close_signal),
-            "long_signal": bool(bar.buy_signal), "exit_signal": bool(bar.close_signal),
+            "long_signal": bool(bar.buy_signal and entry_allowed), "exit_signal": bool(bar.close_signal),
             "entry_mode": str(x.attrs.get("entry_mode", params.get("entry_mode", "any_grid_cross"))),
             "exit_mode": str(x.attrs.get("exit_mode", params.get("exit_mode", "any_grid_cross_down"))),
-            "entry_allowed": True, "session_exit": False}
+            "open_delay_minutes": open_delay_minutes,
+            "entry_allowed": bool(entry_allowed), "session_exit": False}
 
 
 def run(candles: pd.DataFrame, params: dict = BASELINE, capital: float = 100000.0,
@@ -174,18 +191,37 @@ def run(candles: pd.DataFrame, params: dict = BASELINE, capital: float = 100000.
         commission: float = 0.0, evaluation_start=None):
     """Run long-only grid crossings with causal open-based risk exits."""
     x = add_features(candles, params)
-    rows = list(x.iterrows())
+    stamps = x.index
+    n = len(stamps)
+    opens = x["open"].to_numpy(dtype=float)
+    highs = x["high"].to_numpy(dtype=float)
+    closes = x["close"].to_numpy(dtype=float)
+    buys = x["buy_signal"].to_numpy(dtype=bool)
+    closes_sig = x["close_signal"].to_numpy(dtype=bool)
+
     cash = float(capital); position = None; trades = []; equity_rows = []
     slip = slippage_bps / 10000.0
     take_profit_pct = max(0.0, float(params.get("take_profit_pct", 0.0274)))
     stop_loss_pct = max(0.0, float(params.get("stop_loss_pct", 0.1324)))
     trailing_activation_pct = max(0.0, float(params.get("trailing_activation_pct", 0.0)))
     trailing_stop_pct = max(0.0, float(params.get("trailing_stop_pct", 0.0)))
+    open_delay_minutes = max(0, int(params.get("open_delay_minutes", 5)))
+    delay_h = (30 + open_delay_minutes) // 60
+    delay_m = (30 + open_delay_minutes) % 60
+    from datetime import time as dt_time
+    earliest_entry = dt_time(9 + delay_h, delay_m)
     peak_price = 0.0
-    for stamp, bar in rows:
+    times = [s.time() for s in stamps]
+    dates = [s.date() for s in stamps]
+
+    for i in range(n):
+        stamp = stamps[i]
         if evaluation_start is not None and stamp < pd.Timestamp(evaluation_start):
             continue
-        price = float(bar.open)
+        price = opens[i]
+        high = highs[i]
+        close = closes[i]
+        bar_t = times[i]
         if position:
             take_profit = take_profit_pct > 0 and price >= position["entry"] * (1.0 + take_profit_pct)
             stop_loss = stop_loss_pct > 0 and price <= position["entry"] * (1.0 - stop_loss_pct)
@@ -195,9 +231,9 @@ def run(candles: pd.DataFrame, params: dict = BASELINE, capital: float = 100000.
                 and peak_price >= position["entry"] * (1.0 + trailing_activation_pct)
             )
             trailing_stop = trailing_armed and price <= peak_price * (1.0 - trailing_stop_pct)
-            exit_at = session_exit_time(pd.Timestamp(stamp).date())
-            session_exit = bool(exit_at and stamp.time() >= exit_at)
-            if take_profit or stop_loss or trailing_stop or session_exit or bool(bar.close_signal):
+            exit_at = session_exit_time(dates[i])
+            session_exit = bool(exit_at and bar_t >= exit_at)
+            if take_profit or stop_loss or trailing_stop or session_exit or bool(closes_sig[i]):
                 reason = (
                     "TAKE_PROFIT" if take_profit else
                     "STOP_LOSS" if stop_loss else
@@ -213,20 +249,22 @@ def run(candles: pd.DataFrame, params: dict = BASELINE, capital: float = 100000.
                 position = None
                 peak_price = 0.0
             else:
-                # The current bar's high is only known after its open. Carry
-                # it forward for a trailing decision on the next bar.
-                peak_price = max(peak_price, float(bar.high))
-        if position is None and bool(bar.buy_signal):
+                peak_price = max(peak_price, high)
+        if dt_time(9, 30) <= bar_t < dt_time(10, 30):
+            entry_allowed = bar_t >= earliest_entry
+        else:
+            entry_allowed = True
+        if position is None and buys[i] and entry_allowed:
             entry = price * (1.0 + slip)
             qty = math.floor(cash * allocation / entry)
             if qty > 0:
                 cash -= qty * entry + commission
                 position = {"signal_time": stamp, "entry_time": stamp, "entry": entry, "qty": qty}
                 peak_price = entry
-        mark = cash + (position["qty"] * float(bar.close) if position else 0.0)
+        mark = cash + (position["qty"] * close if position else 0.0)
         equity_rows.append({"date": stamp, "equity": mark, "cash": cash, "position": position["qty"] if position else 0})
-    if position and rows:
-        stamp, bar = rows[-1]; exit_price = float(bar.close) * (1.0 - slip)
+    if position and n > 0:
+        stamp = stamps[-1]; exit_price = closes[-1] * (1.0 - slip)
         gross = (exit_price - position["entry"]) * position["qty"]
         costs = commission * 2.0; net = gross - costs
         cash += position["qty"] * exit_price - costs

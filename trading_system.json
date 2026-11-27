@@ -25,5 +25,6 @@
   "mode": "SIMULATE",
   "paper_account_env": "PAPER_ACCOUNT_ID",
   "portfolio_allocation": 0.95,
-  "research_workers": 4
+  "research_workers": 2,
+  "max_cpu_percent": 78
 }

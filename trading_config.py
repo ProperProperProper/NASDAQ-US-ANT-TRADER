@@ -45,6 +45,14 @@ def active_symbols() -> tuple[str, ...]:
     return tuple(load_config()["active_symbols"])
 
 
+def research_workers() -> int:
+    return int(load_config().get("research_workers", 2))
+
+
+def max_cpu_percent() -> float:
+    return float(load_config().get("max_cpu_percent", 78.0))
+
+
 def symbol_slug(symbol: str | None = None) -> str:
     return normalize_symbol(symbol or active_symbol()).replace(".", "-")
 

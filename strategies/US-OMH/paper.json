@@ -1,16 +1,18 @@
 {
-  "interval": 10,
+  "interval": 7,
   "mode": "SIMULATE",
   "params": {
     "entry_mode": "any_grid_cross",
-    "exit_mode": "any_grid_cross_down",
-    "grid_intervals": 4,
-    "grid_lookback": 45,
+    "exit_mode": "lower_half_breakdown",
+    "grid_intervals": 15,
+    "grid_lookback": 5,
+    "open_delay_minutes": 0,
     "stop_loss_pct": 0.1324,
-    "take_profit_pct": 0.0274,
-    "trailing_activation_pct": 0.0,
-    "trailing_stop_pct": 0.0
+    "take_profit_pct": 0.01918,
+    "trailing_activation_pct": 0.01,
+    "trailing_stop_pct": 0.02
   },
-  "run_id": "INITIAL-BASELINE",
-  "symbol": "US.OMH"
+  "run_id": "US-OMH-MINUTE-20261128-022827",
+  "symbol": "US.OMH",
+  "updated_at": "2026-11-27T15:33:07.823116+00:00"
 }

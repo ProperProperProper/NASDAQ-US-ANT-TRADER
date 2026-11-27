@@ -67,7 +67,10 @@ def main() -> int:
             path = strategy_path(symbol)
             paths.append(str(path))
             if not path.exists():
-                payload = {"symbol": symbol, "interval": 10, "params": dict(BASELINE),
+                init_params = dict(BASELINE)
+                if "take_profit_pct" in init_params:
+                    init_params["take_profit_pct"] = round(float(init_params["take_profit_pct"]) * 0.70, 6)
+                payload = {"symbol": symbol, "interval": 10, "params": init_params,
                            "run_id": "INITIAL-BASELINE", "mode": "SIMULATE"}
                 temporary = path.with_name(path.name + ".tmp")
                 temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")

@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DB = ROOT / "quant_dashboard.sqlite3"
 SYMBOL = active_symbol()
 STATE = research_dir(SYMBOL) / "scheduler_state.json"
-RERUN_INTERVAL = dt.timedelta(minutes=15)
+RERUN_INTERVAL = dt.timedelta(minutes=30)
 PREMARKET_CANDIDATES = "20000"
 PREMARKET_FAST_CANDIDATES = "500"
 RTH_CANDIDATES = "2000"
@@ -93,14 +93,14 @@ def main() -> int:
         return 0
     if not rerun_due(previous, session, now):
         finished_at = previous.get("finished_at")
-        print(json.dumps({"state": "SKIPPED", "session": session, "phase": phase, "reason": "rerun not due", "rerun_interval_minutes": 15, "last_finished_at": finished_at}), flush=True)
+        print(json.dumps({"state": "SKIPPED", "session": session, "phase": phase, "reason": "rerun not due", "rerun_interval_minutes": 30, "last_finished_at": finished_at}), flush=True)
         return 0
     eastern_now = now.astimezone(ET)
     fast_premarket = phase == "PREMARKET" and eastern_now.time() >= dt.time(9, 15)
     budget = PREMARKET_FAST_CANDIDATES if fast_premarket else (PREMARKET_CANDIDATES if phase == "PREMARKET" else RTH_CANDIDATES)
     STATE.write_text(json.dumps({"state": "RUNNING", "session": session, "phase": phase, "started_at": now.isoformat()}, indent=2) + "\n")
     eastern_date = now.astimezone(ET).date().isoformat()
-    command = ["/usr/bin/nice", "-n", "10", sys.executable, str(ROOT / "scripts/app_minute_interval_sweep.py"), "--symbol", SYMBOL, "--start", "2020-01-01", "--end", eastern_date, "--total-candidates", budget, "--phase", phase, "--ai"]
+    command = ["/usr/sbin/taskpolicy", "-b", "-c", "background", "/usr/bin/nice", "-n", "15", sys.executable, str(ROOT / "scripts/app_minute_interval_sweep.py"), "--symbol", SYMBOL, "--start", "2020-01-01", "--end", eastern_date, "--total-candidates", budget, "--phase", phase, "--ai"]
     if phase == "RTH" or fast_premarket:
         command.extend(["--intervals", active_intervals()])
     result = subprocess.run(command, cwd=ROOT, check=False)

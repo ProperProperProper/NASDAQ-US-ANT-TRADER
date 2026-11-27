@@ -281,10 +281,16 @@ class CompetitionBot:
         return bool(exit_at and close_at and exit_at <= now.time() < close_at)
 
     @staticmethod
-    def entry_window_open() -> bool:
-        """Allow entries only during RTH and before the forced-exit window."""
+    def entry_window_open(open_delay_minutes: int = 5) -> bool:
+        """Allow entries only during RTH, after the open delay, and before the forced-exit window."""
         now = datetime.now(ET)
-        return session_phase(now.date(), now.time()) == "RTH" and not CompetitionBot.session_exit_due()
+        if session_phase(now.date(), now.time()) != "RTH":
+            return False
+        delay_h = (30 + open_delay_minutes) // 60
+        delay_m = (30 + open_delay_minutes) % 60
+        if now.time() < dt_time(9 + delay_h, delay_m):
+            return False
+        return not CompetitionBot.session_exit_due()
 
     def session_reentry_blocked(self, symbol: str) -> bool:
         """Prevent a fresh entry after this session's mandatory exit."""
@@ -548,10 +554,14 @@ class CompetitionBot:
                     self._save_state()
                     continue
 
+                open_delay = int(params.get("open_delay_minutes", 5))
                 if signal_data["long_signal"] and signal_data["entry_allowed"]:
-                    if not self.entry_window_open():
-                        logging.info("entry blocked symbol=%s reason=OUTSIDE_ENTRY_WINDOW", symbol)
-                        audit_api.event("ENTRY_BLOCKED", symbol, {"reason": "OUTSIDE_ENTRY_WINDOW", "price": price, "signal": signal_data, "paper": True})
+                    if not self.entry_window_open(open_delay):
+                        logging.info("entry blocked symbol=%s reason=OUTSIDE_ENTRY_WINDOW delay=%dm", symbol, open_delay)
+                        audit_api.event("ENTRY_BLOCKED", symbol, {"reason": "OUTSIDE_ENTRY_WINDOW", "open_delay_minutes": open_delay, "price": price, "signal": signal_data, "paper": True})
+                    elif price < float(signal_data.get("open", price)):
+                        logging.info("entry blocked symbol=%s reason=BEARISH_PRICE price=%.4f open=%.4f", symbol, price, signal_data.get("open"))
+                        audit_api.event("ENTRY_BLOCKED", symbol, {"reason": "BEARISH_PRICE", "price": price, "open": signal_data.get("open"), "signal": signal_data, "paper": True})
                     else:
                         open_positions = self.open_position_count()
                         if open_positions >= MAX_OPEN_POSITIONS:

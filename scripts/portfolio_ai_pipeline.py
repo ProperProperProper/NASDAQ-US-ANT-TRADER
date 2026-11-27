@@ -62,7 +62,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--symbols", default=",".join(active_symbols()))
     parser.add_argument("--total-candidates", type=int, default=100_000)
-    parser.add_argument("--workers", type=int, default=4, choices=range(1, 5))
+    parser.add_argument("--workers", type=int, default=2, choices=range(1, 11))
     args = parser.parse_args()
     if args.total_candidates < 10:
         parser.error("--total-candidates must be at least 10 for the 1–10 minute sweep")

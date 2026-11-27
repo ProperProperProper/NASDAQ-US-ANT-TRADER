@@ -3,15 +3,16 @@
   "mode": "SIMULATE",
   "params": {
     "entry_mode": "any_grid_cross",
-    "exit_mode": "bottom_breakdown",
+    "exit_mode": "lower_half_breakdown",
     "grid_intervals": 7,
-    "grid_lookback": 60,
+    "grid_lookback": 37,
+    "open_delay_minutes": 0,
     "stop_loss_pct": 0.1324,
-    "take_profit_pct": 0.0274,
-    "trailing_activation_pct": 0.005,
-    "trailing_stop_pct": 0.005
+    "take_profit_pct": 0.014,
+    "trailing_activation_pct": 0.02,
+    "trailing_stop_pct": 0.01
   },
-  "run_id": "US-ANT-MINUTE-20261128-004138",
+  "run_id": "US-ANT-MINUTE-20261128-015614",
   "symbol": "US.ANT",
-  "updated_at": "2026-11-27T13:49:34.627753+00:00"
+  "updated_at": "2026-11-27T15:32:57.307039+00:00"
 }

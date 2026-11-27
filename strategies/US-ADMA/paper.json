@@ -7,7 +7,7 @@
     "grid_intervals": 4,
     "grid_lookback": 45,
     "stop_loss_pct": 0.1324,
-    "take_profit_pct": 0.0274,
+    "take_profit_pct": 0.01918,
     "trailing_activation_pct": 0.0,
     "trailing_stop_pct": 0.0
   },

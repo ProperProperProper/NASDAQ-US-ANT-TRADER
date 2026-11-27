@@ -4,6 +4,16 @@ let botPlist = "/Users/local.local/Library/LaunchAgents/com.local.trading-engine
 let engineBinary = "/Users/local.local/Projects/TradingSystem/ai_gateway/target/release/trading_engine"
 let projectRoot = "/Users/local.local/Projects/TradingSystem"
 
+func padL(_ str: String, _ length: Int) -> String {
+    if str.count >= length { return str }
+    return String(repeating: " ", count: length - str.count) + str
+}
+
+func padR(_ str: String, _ length: Int) -> String {
+    if str.count >= length { return str }
+    return str + String(repeating: " ", count: length - str.count)
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow!
     let status = NSTextField(labelWithString: "Checking…")
@@ -18,6 +28,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let progress = NSProgressIndicator()
     let progressLabel = NSTextField(labelWithString: "0%")
     let output = NSTextView()
+    let positionsOutput = NSTextView()
+    let configsOutput = NSTextView()
+    let tabView = NSTabView()
     let symbolField = NSTextField(string: "US.MRNA")
     let multiSymbolField = NSTextField(string: "US.MRNA,US.ANT,US.NVDA,US.MU,US.SNDK,US.OMH,US.APP")
     var sweepProcess: Process?
@@ -155,36 +168,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         symbolButton.autoresizingMask = [.minXMargin]
         runtime.addSubview(symbolButton)
 
-        let research = NSBox(frame: NSMakeRect(20, 20, 900, 375))
-        research.autoresizingMask = [.width, .height]
-        research.title = "Portfolio strategies, testing & AI research"
-        research.titlePosition = .atTop
-        root.addSubview(research)
-        sweepStatus.frame = NSMakeRect(18, 325, 610, 20)
+        tabView.frame = NSMakeRect(20, 20, 900, 380)
+        tabView.autoresizingMask = [.width, .height]
+        root.addSubview(tabView)
+
+        // --- Tab 1: Live Positions & P/L ---
+        let tabPositions = NSTabViewItem(identifier: "positions")
+        tabPositions.label = "Open Positions & P/L"
+        let posView = NSView(frame: tabView.bounds)
+        posView.autoresizingMask = [.width, .height]
+        let posScroll = NSScrollView(frame: NSMakeRect(12, 12, 876, 320))
+        posScroll.autoresizingMask = [.width, .height]
+        posScroll.hasVerticalScroller = true
+        posScroll.borderType = .bezelBorder
+        positionsOutput.isEditable = false
+        positionsOutput.isRichText = false
+        positionsOutput.frame = posScroll.contentView.bounds
+        positionsOutput.autoresizingMask = [.width, .height]
+        positionsOutput.isHorizontallyResizable = false
+        positionsOutput.textContainer?.widthTracksTextView = true
+        positionsOutput.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        positionsOutput.backgroundColor = .controlBackgroundColor
+        posScroll.documentView = positionsOutput
+        posView.addSubview(posScroll)
+        tabPositions.view = posView
+        tabView.addTabViewItem(tabPositions)
+
+        // --- Tab 2: Strategy Lab & AI Research ---
+        let tabResearch = NSTabViewItem(identifier: "research")
+        tabResearch.label = "Strategy Lab & AI Research"
+        let resView = NSView(frame: tabView.bounds)
+        resView.autoresizingMask = [.width, .height]
+
+        sweepStatus.frame = NSMakeRect(12, 305, 610, 20)
         sweepStatus.autoresizingMask = [.width, .minYMargin]
-        research.addSubview(sweepStatus)
-        sweepMetrics.frame = NSMakeRect(18, 300, 850, 20)
+        resView.addSubview(sweepStatus)
+        sweepMetrics.frame = NSMakeRect(12, 282, 850, 18)
         sweepMetrics.autoresizingMask = [.width, .minYMargin]
         sweepMetrics.font = NSFont.systemFont(ofSize: 11)
         sweepMetrics.textColor = .secondaryLabelColor
-        research.addSubview(sweepMetrics)
-        winner.frame = NSMakeRect(18, 275, 850, 20)
+        resView.addSubview(sweepMetrics)
+        winner.frame = NSMakeRect(12, 260, 850, 18)
         winner.autoresizingMask = [.width, .minYMargin]
         winner.font = NSFont.systemFont(ofSize: 11)
-        research.addSubview(winner)
+        resView.addSubview(winner)
         progress.isIndeterminate = false
         progress.minValue = 0
         progress.maxValue = 1
         progress.doubleValue = 0
         progress.style = .bar
-        progress.frame = NSMakeRect(650, 325, 175, 16)
+        progress.frame = NSMakeRect(650, 305, 175, 16)
         progress.autoresizingMask = [.minXMargin, .minYMargin]
-        research.addSubview(progress)
+        resView.addSubview(progress)
         progressLabel.alignment = .right
-        progressLabel.frame = NSMakeRect(835, 323, 45, 20)
+        progressLabel.frame = NSMakeRect(835, 303, 45, 20)
         progressLabel.autoresizingMask = [.minXMargin, .minYMargin]
-        research.addSubview(progressLabel)
-        let scroll = NSScrollView(frame: NSMakeRect(18, 58, 864, 210))
+        resView.addSubview(progressLabel)
+        let scroll = NSScrollView(frame: NSMakeRect(12, 52, 876, 200))
         scroll.autoresizingMask = [.width, .height]
         scroll.hasVerticalScroller = true
         scroll.borderType = .bezelBorder
@@ -196,15 +236,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         output.font = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
         output.backgroundColor = .controlBackgroundColor
         scroll.documentView = output
-        research.addSubview(scroll)
+        resView.addSubview(scroll)
         let sweepButton = button("Test 1–10m → AI optimise every symbol", #selector(startSweep))
-        sweepButton.frame = NSMakeRect(18, 16, 335, 32)
+        sweepButton.frame = NSMakeRect(12, 12, 335, 32)
         sweepButton.autoresizingMask = [.maxXMargin, .maxYMargin]
-        research.addSubview(sweepButton)
-        multiSymbolField.frame = NSMakeRect(365, 19, 517, 26)
+        resView.addSubview(sweepButton)
+        multiSymbolField.frame = NSMakeRect(355, 15, 533, 26)
         multiSymbolField.autoresizingMask = [.width, .maxYMargin]
         multiSymbolField.placeholderString = "US.MRNA,US.ANT,US.NVDA,US.MU,US.SNDK,US.OMH,US.APP"
-        research.addSubview(multiSymbolField)
+        resView.addSubview(multiSymbolField)
+        tabResearch.view = resView
+        tabView.addTabViewItem(tabResearch)
+
+        // --- Tab 3: Deployed Strategy Configs ---
+        let tabConfigs = NSTabViewItem(identifier: "configs")
+        tabConfigs.label = "Deployed Configs"
+        let confView = NSView(frame: tabView.bounds)
+        confView.autoresizingMask = [.width, .height]
+        let confScroll = NSScrollView(frame: NSMakeRect(12, 12, 876, 320))
+        confScroll.autoresizingMask = [.width, .height]
+        confScroll.hasVerticalScroller = true
+        confScroll.borderType = .bezelBorder
+        configsOutput.isEditable = false
+        configsOutput.isRichText = false
+        configsOutput.frame = confScroll.contentView.bounds
+        configsOutput.autoresizingMask = [.width, .height]
+        configsOutput.isHorizontallyResizable = false
+        configsOutput.textContainer?.widthTracksTextView = true
+        configsOutput.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        configsOutput.backgroundColor = .controlBackgroundColor
+        confScroll.documentView = configsOutput
+        confView.addSubview(confScroll)
+        tabConfigs.view = confView
+        tabView.addTabViewItem(tabConfigs)
+        tabView.selectTabViewItem(at: 0)
     }
 
     func runCommand(_ path: String, _ arguments: [String], completion: @escaping (Int32, String) -> Void) {
@@ -251,8 +316,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let side = value?["position_side"] as? String ?? "UNKNOWN"
             let qty = value?["qty"] as? Int ?? 0
             let orders = value?["active_orders"] as? Int ?? 0
+            let totalAssets = value?["total_assets"] as? Double ?? 0.0
+            let cash = value?["cash"] as? Double ?? 0.0
+            let marketVal = value?["market_val"] as? Double ?? 0.0
+            let rawPositions = value?["positions"] as? [[String: Any]] ?? []
+
             DispatchQueue.main.async {
                 self.account.stringValue = value == nil ? "SIMULATE · account unavailable" : "\(environment) · \(accountID) · \(side) \(qty) · orders \(orders)"
+
+                var table = String(format: "ACCOUNT OVERVIEW · %@ #%d\n", environment, accountID)
+                table += String(format: "Total Assets: $%-12.2f  |  Market Value: $%-12.2f  |  Cash: $%-12.2f\n\n", totalAssets, marketVal, cash)
+
+                let h = padR("SYMBOL", 8) + " " + padR("COMPANY", 18) + " " + padL("SHARES", 8) + "    " + padL("AVG COST", 10) + "    " + padL("CURRENT", 10) + "    " + padL("UNREALIZED P/L", 14) + "    " + padL("RETURN", 8) + "\n"
+                table += h
+                table += String(repeating: "-", count: h.count - 1) + "\n"
+
+                var totalPl = 0.0
+                if rawPositions.isEmpty {
+                    table += "No open positions (flat portfolio)\n"
+                } else {
+                    for pos in rawPositions {
+                        let code = (pos["code"] as? String ?? "?").replacingOccurrences(of: "US.", with: "")
+                        let name = pos["stock_name"] as? String ?? ""
+                        let pQty = pos["qty"] as? Double ?? 0.0
+                        let cost = pos["cost_price"] as? Double ?? 0.0
+                        let current = pos["nominal_price"] as? Double ?? 0.0
+                        let plVal = pos["pl_val"] as? Double ?? 0.0
+                        let plRatio = (pos["pl_ratio"] as? Double ?? 0.0) * 1.0
+                        totalPl += plVal
+                        let plSign = plVal >= 0 ? "+" : "-"
+                        let plRatioSign = plRatio >= 0 ? "+" : "-"
+                        let plStr = String(format: "%@$%.2f", plSign, abs(plVal))
+                        let pctStr = String(format: "%@%.2f%%", plRatioSign, abs(plRatio))
+                        let costStr = String(format: "$%.2f", cost)
+                        let curStr = String(format: "$%.2f", current)
+                        let qtyStr = String(format: "%.0f", pQty)
+                        let shortName = name.count > 18 ? String(name.prefix(17)) + "…" : name
+                        let row = padR(code, 8) + " " + padR(shortName, 18) + " " + padL(qtyStr, 8) + "    " + padL(costStr, 10) + "    " + padL(curStr, 10) + "    " + padL(plStr, 14) + "    " + padL(pctStr, 8) + "\n"
+                        table += row
+                    }
+                    table += String(repeating: "-", count: h.count - 1) + "\n"
+                    let plTotalSign = totalPl >= 0 ? "+" : "-"
+                    table += String(format: "TOTAL UNREALIZED P/L: %@$%.2f (across %d open positions)\n", plTotalSign, abs(totalPl), rawPositions.count)
+                }
+                let monoFont = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+                let attrStr = NSAttributedString(string: table, attributes: [
+                    .font: monoFont,
+                    .foregroundColor: NSColor.textColor
+                ])
+                self.positionsOutput.textStorage?.setAttributedString(attrStr)
             }
         }
         runCommand("/usr/bin/python3", ["-c", "import sys,json,collections; sys.path.insert(0,'\(root)'); from trading_config import active_symbols,research_dir; states=[(json.load(open(p)) if p.exists() else {}).get('state','NOT RUN') for s in active_symbols() for p in [research_dir(s)/'scheduler_state.json']]; c=collections.Counter(states); print('Research queue · ' + ' · '.join(str(c[k])+' '+k.lower() for k in sorted(c)))"]) { _, output in
@@ -279,22 +391,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let ai = value["ai"] as? Int ?? 0
                 let saved = value["saved"] as? Int ?? 0
                 self.sweepMetrics.stringValue = "Candidates: \(candidates) · AI proposals: \(ai) · Profitable saved: \(saved) · Run \(value["run"] as? String ?? "none")"
-                if self.sweepProcess?.isRunning != true, let configs = value["configs"] as? [[String: Any]] {
+                if let configs = value["configs"] as? [[String: Any]] {
                     let allocation = configs.isEmpty ? 0.0 : 95.0 / Double(configs.count)
+                    let confHeader = padR("SYMBOL", 8) + " " + padR("INTERVAL", 9) + " " + padR("LOOKBACK", 9) + " " + padR("GRIDS", 6) + " " + padR("ALLOC", 8) + " " + padR("TAKE PROFIT", 12) + " " + padR("STOP LOSS", 10) + " " + padR("TRAIL", 9) + " " + "ENTRY / EXIT MODES\n"
                     let configRows = configs.map { config -> String in
                         let symbol = (config["symbol"] as? String ?? "?").replacingOccurrences(of: "US.", with: "")
-                        let interval = config["interval"] as? Int ?? 0
+                        let interval = "\(config["interval"] as? Int ?? 0)m"
                         let params = config["params"] as? [String: Any] ?? [:]
-                        let lookback = params["grid_lookback"] as? Int ?? 0
-                        let grids = params["grid_intervals"] as? Int ?? 0
+                        let lookback = "\(params["grid_lookback"] as? Int ?? 0)"
+                        let grids = "\(params["grid_intervals"] as? Int ?? 0)"
                         let entry = params["entry_mode"] as? String ?? "?"
                         let exit = params["exit_mode"] as? String ?? "?"
-                        let takeProfit = params["take_profit_pct"] as? Double ?? 0
-                        let stopLoss = params["stop_loss_pct"] as? Double ?? 0
-                        let trail = params["trailing_stop_pct"] as? Double ?? 0
-                        return String(format: "%-5@ %2dm L%-3d G%-2d alloc %5.2f%% TP %4.2f%% SL %5.2f%% TR %4.2f%%  %@ / %@", symbol as NSString, interval, lookback, grids, allocation, takeProfit * 100, stopLoss * 100, trail * 100, entry, exit)
+                        let takeProfit = String(format: "%.2f%%", (params["take_profit_pct"] as? Double ?? 0) * 100)
+                        let stopLoss = String(format: "%.2f%%", (params["stop_loss_pct"] as? Double ?? 0) * 100)
+                        let trail = String(format: "%.2f%%", (params["trailing_stop_pct"] as? Double ?? 0) * 100)
+                        let allocStr = String(format: "%.2f%%", allocation)
+                        return padR(symbol, 8) + " " + padR(interval, 9) + " " + padR(lookback, 9) + " " + padR(grids, 6) + " " + padR(allocStr, 8) + " " + padR(takeProfit, 12) + " " + padR(stopLoss, 10) + " " + padR(trail, 9) + " " + "\(entry) / \(exit)"
                     }
-                    self.output.string = "SYMBOL  CONFIG (independent per-symbol paper strategy)\n" + configRows.joined(separator: "\n")
+                    let confText = "INDEPENDENT PER-SYMBOL STRATEGY CONFIGURATIONS (SIMULATE)\n" + String(repeating: "-", count: confHeader.count - 1) + "\n" + confHeader + String(repeating: "-", count: confHeader.count - 1) + "\n" + configRows.joined(separator: "\n")
+                    let monoFont = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+                    self.configsOutput.textStorage?.setAttributedString(NSAttributedString(string: confText, attributes: [.font: monoFont, .foregroundColor: NSColor.textColor]))
+                    if self.sweepProcess?.isRunning != true && self.output.string.isEmpty {
+                        self.output.string = "Ready. Select a test or AI sweep below.\n"
+                    }
                 }
             }
         }
@@ -336,7 +455,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func startSweep() {
         if sweepProcess?.isRunning == true { return }
         sweepStatus.stringValue = "Benchmarking every symbol across 1–10m, then AI-optimising each config…"
-        sweepMetrics.stringValue = "Stage 1: 70 interval tests · Stage 2: independent 100k + AI search per symbol · 4 workers"
+        sweepMetrics.stringValue = "Stage 1: 70 interval tests · Stage 2: independent 100k + AI search per symbol · 2 workers"
         progress.doubleValue = 0
         progressLabel.stringValue = "0%"
         output.string = "PORTFOLIO PIPELINE\n1. Benchmark all symbols at 1–10m\n2. AI optimise each symbol independently\nWaiting to start…\n"
@@ -357,7 +476,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let symbols = multiSymbolField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !symbols.isEmpty else { return }
         sweepStatus.stringValue = "Testing \(symbols) across 1–10 minute intervals…"
-        sweepMetrics.stringValue = "Four evaluator workers · paper research only"
+        sweepMetrics.stringValue = "Two evaluator workers · paper research only"
         progress.isIndeterminate = true
         progress.startAnimation(nil)
         output.string = "SYMBOL       INTERVAL   RETURN      DRAWDOWN    TRADES\n"
@@ -368,7 +487,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withFullDate]
         process.arguments = ["\(projectRoot)/scripts/multi_symbol_backtest.py", "--symbols", symbols,
-                             "--start", iso.string(from: start), "--end", iso.string(from: end), "--workers", "4"]
+                             "--start", iso.string(from: start), "--end", iso.string(from: end), "--workers", "2"]
         process.currentDirectoryURL = URL(fileURLWithPath: projectRoot)
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -428,7 +547,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func launchSweep(root: String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        process.arguments = ["\(root)/scripts/portfolio_ai_pipeline.py", "--symbols", multiSymbolField.stringValue, "--total-candidates", "100000", "--workers", "4"]
+        process.arguments = ["\(root)/scripts/portfolio_ai_pipeline.py", "--symbols", multiSymbolField.stringValue, "--total-candidates", "100000", "--workers", "2"]
         process.currentDirectoryURL = URL(fileURLWithPath: root)
         let pipe = Pipe()
         process.standardOutput = pipe

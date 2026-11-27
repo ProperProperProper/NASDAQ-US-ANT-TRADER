@@ -58,7 +58,7 @@ def main() -> int:
     parser.add_argument("--start", required=True)
     parser.add_argument("--end", required=True)
     parser.add_argument("--intervals", default="1,2,3,4,5,6,7,8,9,10")
-    parser.add_argument("--workers", type=int, default=4, choices=range(1, 5))
+    parser.add_argument("--workers", type=int, default=2, choices=range(1, 11))
     parser.add_argument("--no-refresh", action="store_true", help="use only the existing local 1-minute cache")
     parser.add_argument("--output", type=Path, default=ROOT / "multi_symbol_results" / "latest.json")
     args = parser.parse_args()

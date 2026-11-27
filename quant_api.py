@@ -88,10 +88,13 @@ def write_live_strategy(symbol: str, interval: int, params: dict[str, Any], run_
     symbol = normalize_symbol(symbol)
     if symbol not in active_symbols() or int(interval) not in range(1, 11):
         raise ValueError("paper strategy requires a configured portfolio symbol and a 1–10 minute interval")
+    valid_params = validate_strategy_params(params)
+    if "take_profit_pct" in valid_params:
+        valid_params["take_profit_pct"] = round(float(valid_params["take_profit_pct"]) * 0.70, 6)
     payload = {
         "symbol": symbol,
         "interval": int(interval),
-        "params": validate_strategy_params(params),
+        "params": valid_params,
         "run_id": run_id,
         "updated_at": pd.Timestamp.now(tz="UTC").isoformat(),
         "mode": "SIMULATE",

@@ -58,6 +58,12 @@ def check() -> dict:
         env = str(row.iloc[0].trd_env) if not row.empty else "MISSING"
         ret, positions = trade.position_list_query(trd_env=TrdEnv.SIMULATE, acc_id=acct)
         held = positions[positions.code.astype(str).isin(SYMBOLS) & (positions.qty.astype(float) != 0)] if ret == RET_OK and not positions.empty else positions.iloc[0:0]
+        ret_acc, acc_info = trade.accinfo_query(trd_env=TrdEnv.SIMULATE, acc_id=acct)
+        total_assets = float(acc_info.iloc[0].total_assets) if ret_acc == RET_OK and not acc_info.empty else 0.0
+        cash = float(acc_info.iloc[0].cash) if ret_acc == RET_OK and not acc_info.empty else 0.0
+        market_val = float(acc_info.iloc[0].market_val) if ret_acc == RET_OK and not acc_info.empty else 0.0
+        pos_cols = ("code", "stock_name", "qty", "cost_price", "nominal_price", "pl_val", "pl_ratio", "position_side")
+        held_records = held[[c for c in pos_cols if c in held.columns]].to_dict("records") if not held.empty else []
         ret, orders = trade.order_list_query(trd_env=TrdEnv.SIMULATE, acc_id=acct)
         portfolio_orders = orders[orders.code.astype(str).isin(SYMBOLS)] if ret == RET_OK and not orders.empty else orders.iloc[0:0]
         active = portfolio_orders[~portfolio_orders.order_status.astype(str).str.upper().isin(TERMINAL)] if not portfolio_orders.empty else portfolio_orders
@@ -75,7 +81,10 @@ def check() -> dict:
             "research_count": process_count("continuous_research_scheduler.py"),
             "symbols": list(SYMBOLS),
             "qty": int(held.qty.astype(float).sum()) if not held.empty else 0,
-            "positions": held[[column for column in ("code", "qty", "cost_price", "position_side") if column in held]].to_dict("records") if not held.empty else [],
+            "total_assets": total_assets,
+            "cash": cash,
+            "market_val": market_val,
+            "positions": held_records,
             "position_side": "PORTFOLIO" if not held.empty else "FLAT",
             "active_orders": len(active),
             "quotes": {symbol: {"bid": float(quotes.loc[symbol].bid_price), "ask": float(quotes.loc[symbol].ask_price)} for symbol in SYMBOLS if symbol in quotes.index},

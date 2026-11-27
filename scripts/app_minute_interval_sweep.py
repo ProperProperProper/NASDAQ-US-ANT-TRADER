@@ -22,7 +22,7 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from trading_config import active_symbol, active_symbols, normalize_symbol, promotion_path, research_dir, strategy_path
+from trading_config import active_symbol, active_symbols, normalize_symbol, promotion_path, research_dir, strategy_path, research_workers
 ACTIVE_SYMBOL = active_symbol()
 RANDOM_HISTORY = research_dir(ACTIVE_SYMBOL) / "randomized_param_history.json"
 MAX_RESEARCH_SESSIONS = 5
@@ -30,9 +30,9 @@ MAX_INTERVAL_MINUTES = 10
 MAX_KNOWN_SUCCESSFUL_PER_INTERVAL = 5
 # Keep research below the CPU threshold used by MLX Sentinel so local AI and
 # the paper bot remain responsive while sweeps run asynchronously.
-# Use four isolated evaluator workers so research finishes promptly while
-# remaining well below the machine-wide resource ceiling on this 10-core Mac.
-RESEARCH_WORKERS = max(1, min(4, int(os.environ.get("RESEARCH_WORKERS", "4"))))
+# Use configured evaluator workers so research finishes promptly while
+# remaining well below the machine-wide resource ceiling on this Mac.
+RESEARCH_WORKERS = max(1, min(10, int(os.environ.get("RESEARCH_WORKERS", str(research_workers())))))
 # Eligible candidates are promoted automatically through the paper bot's
 # broker-verified flat-position gate; never publish directly from research.
 AUTO_PROMOTION_ENABLED = True
@@ -159,6 +159,8 @@ def candidates(interval: int, count: int, excluded: set[str]) -> list[dict]:
         params["exit_mode"] = rng.choice(("any_grid_cross_down", "top_breakdown", "bottom_breakdown", "lower_half_breakdown"))
         params["trailing_activation_pct"] = rng.choice((0.0, 0.005, 0.01, 0.015, 0.02, 0.03, 0.04))
         params["trailing_stop_pct"] = rng.choice((0.0, 0.005, 0.01, 0.015, 0.02, 0.03, 0.04))
+        params["take_profit_pct"] = rng.choice((0.008, 0.012, 0.015, 0.02, 0.025, 0.0274, 0.03, 0.035, 0.04, 0.05, 0.06, 0.08))
+        params["open_delay_minutes"] = rng.choice((0, 2, 5, 8, 10, 12, 15, 20, 25, 30, 35, 40, 45))
         if params["trailing_activation_pct"] == 0.0:
             params["trailing_stop_pct"] = 0.0
         key = f"{interval}m:{param_key(params)}"
@@ -232,6 +234,10 @@ def ai_candidates(interval: int) -> list[dict]:
                 params["grid_lookback"] = max(5, min(120, int(item["grid_lookback"])))
             if "grid_intervals" in item:
                 params["grid_intervals"] = max(2, min(20, int(item["grid_intervals"])))
+            if "open_delay_minutes" in item:
+                params["open_delay_minutes"] = max(0, min(60, int(item["open_delay_minutes"])))
+            if "take_profit_pct" in item:
+                params["take_profit_pct"] = max(0.005, min(0.20, float(item["take_profit_pct"])))
         except (TypeError, ValueError):
             continue
         for name in ("trailing_activation_pct", "trailing_stop_pct"):
@@ -257,6 +263,8 @@ def promote_winner(winner: dict) -> dict:
     if interval not in range(1, MAX_INTERVAL_MINUTES + 1):
         raise ValueError("promotion interval must be between 1 and 10 minutes")
     params = validate_strategy_params(winner["params"])
+    if "take_profit_pct" in params:
+        params["take_profit_pct"] = round(float(params["take_profit_pct"]) * 0.70, 6)
     payload = {
         "symbol": ACTIVE_SYMBOL, "interval": interval, "params": params,
         "run_id": winner["run_id"], "updated_at": pd.Timestamp.now(tz="UTC").isoformat(),

@@ -50,13 +50,14 @@ impl Worker {
         let log = Path::new(ROOT).join(self.log);
         let stdout = OpenOptions::new().create(true).append(true).open(&log)?;
         let stderr = stdout.try_clone()?;
+        let workers = configured_workers();
         let mut command = Command::new(self.program);
         command.args(&self.args).current_dir(ROOT).stdout(Stdio::from(stdout)).stderr(Stdio::from(stderr))
             .env("PAPER_ACCOUNT_ID", account)
             .env("PARENT_ENGINE_PID", std::process::id().to_string())
-            .env("OMP_NUM_THREADS", "4").env("OPENBLAS_NUM_THREADS", "4")
-            .env("MKL_NUM_THREADS", "4").env("VECLIB_MAXIMUM_THREADS", "4")
-            .env("RESEARCH_WORKERS", "4");
+            .env("OMP_NUM_THREADS", &workers).env("OPENBLAS_NUM_THREADS", &workers)
+            .env("MKL_NUM_THREADS", &workers).env("VECLIB_MAXIMUM_THREADS", &workers)
+            .env("RESEARCH_WORKERS", &workers);
         unsafe {
             command.pre_exec(|| {
                 if setpgid(0, 0) == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
@@ -114,6 +115,15 @@ fn account() -> Result<String, String> {
     Ok(value)
 }
 
+fn configured_workers() -> String {
+    std::fs::read_to_string(Path::new(ROOT).join("trading_system.json"))
+        .ok()
+        .and_then(|data| serde_json::from_str::<serde_json::Value>(&data).ok())
+        .and_then(|val| val.get("research_workers").and_then(|v| v.as_u64()))
+        .unwrap_or(2)
+        .to_string()
+}
+
 fn active_symbols() -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let value: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(Path::new(ROOT).join("trading_system.json"))?)?;
     let symbols = value.get("active_symbols").and_then(|item| item.as_array()).ok_or("active_symbols is required")?
@@ -167,7 +177,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = std::os::unix::net::UnixListener::bind(&socket)?;
     std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600))?;
     listener.set_nonblocking(true)?;
-    eprintln!("paper engine started for {}; four research workers maximum", symbols.join(","));
+    let workers_count = configured_workers();
+    eprintln!("paper engine started for {}; {} research workers maximum", symbols.join(","), workers_count);
     while !STOP.load(Ordering::SeqCst) {
         for worker in &mut workers { worker.tick(&account); }
         match listener.accept() {

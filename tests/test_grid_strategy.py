@@ -116,10 +116,22 @@ class GridStrategyTests(unittest.TestCase):
     def test_entries_are_blocked_outside_rth_and_exit_window(self):
         with patch("competition_bot.session_phase", return_value="PREMARKET"):
             self.assertFalse(CompetitionBot.entry_window_open())
-        with patch("competition_bot.session_phase", return_value="RTH"), patch.object(CompetitionBot, "session_exit_due", return_value=False):
-            self.assertTrue(CompetitionBot.entry_window_open())
-        with patch("competition_bot.session_phase", return_value="RTH"), patch.object(CompetitionBot, "session_exit_due", return_value=True):
-            self.assertFalse(CompetitionBot.entry_window_open())
+        fake_932 = datetime(2026, 1, 5, 9, 32, tzinfo=ET)
+        fake_940 = datetime(2026, 1, 5, 9, 40, tzinfo=ET)
+        fake_1000 = datetime(2026, 1, 5, 10, 0, tzinfo=ET)
+        with patch("competition_bot.session_phase", return_value="RTH"), patch("competition_bot.datetime") as mock_dt, patch.object(CompetitionBot, "session_exit_due", return_value=False):
+            mock_dt.now.return_value = fake_932
+            self.assertFalse(CompetitionBot.entry_window_open(5))
+            # Test custom 15m delay: at 9:40 it is blocked, at 10:00 it is open
+            mock_dt.now.return_value = fake_940
+            self.assertFalse(CompetitionBot.entry_window_open(15))
+            self.assertTrue(CompetitionBot.entry_window_open(5))
+        with patch("competition_bot.session_phase", return_value="RTH"), patch("competition_bot.datetime") as mock_dt, patch.object(CompetitionBot, "session_exit_due", return_value=False):
+            mock_dt.now.return_value = fake_1000
+            self.assertTrue(CompetitionBot.entry_window_open(15))
+        with patch("competition_bot.session_phase", return_value="RTH"), patch("competition_bot.datetime") as mock_dt, patch.object(CompetitionBot, "session_exit_due", return_value=True):
+            mock_dt.now.return_value = fake_1000
+            self.assertFalse(CompetitionBot.entry_window_open(15))
 
     def test_session_exit_persists_no_reentry_lock(self):
         bot = object.__new__(CompetitionBot)
@@ -171,11 +183,23 @@ class GridStrategyTests(unittest.TestCase):
             root = Path(directory)
             pending = root / "pending_paper_strategy_promotion.json"
             with patch("scripts.app_minute_interval_sweep.PENDING_PROMOTION_PATH", pending):
-                result = promote_winner({"interval": "8m", "params": {"grid_lookback": 52}, "run_id": "test"})
+                result = promote_winner({"interval": "8m", "params": {"grid_lookback": 52, "take_profit_pct": 0.04, "stop_loss_pct": 0.12}, "run_id": "test"})
             self.assertEqual(result["state"], "QUEUED_BROKER_CHECK")
             payload = json.loads(pending.read_text())
             self.assertEqual((payload["symbol"], payload["interval"], payload["mode"]), ("US.MRNA", 8, "SIMULATE"))
+            self.assertEqual(payload["params"]["take_profit_pct"], 0.028)
+            self.assertEqual(payload["params"]["stop_loss_pct"], 0.12)
             self.assertFalse((root / "paper_bot_live_strategy.json").exists())
+
+    def test_buy_signal_requires_bullish_candle(self):
+        c_green = self.candles()
+        f_green = add_features(c_green, {"grid_lookback": 3, "grid_intervals": 4})
+        self.assertTrue(bool(f_green.iloc[4]["buy_signal"]))
+
+        c_red = self.candles().copy()
+        c_red.iloc[7, c_red.columns.get_loc("close")] = 98.0
+        f_red = add_features(c_red, {"grid_lookback": 3, "grid_intervals": 4})
+        self.assertFalse(bool(f_red.iloc[4]["buy_signal"]))
 
     def test_research_phases_use_us_eastern_market_hours(self):
         self.assertEqual(session_phase(pd.Timestamp("2026-01-05 12:00", tz="UTC").to_pydatetime()), "PREMARKET")
