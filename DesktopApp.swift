@@ -25,10 +25,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         terminateStaleAppInstances()
-        window = NSWindow(contentRect: NSMakeRect(0, 0, 720, 560), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "Moomoo Paper Trader"
-        window.center()
+        window = NSWindow(contentRect: NSMakeRect(0, 0, 940, 720), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window.title = "NASDAQ Paper Trading Desk"
+        window.minSize = NSSize(width: 900, height: 650)
         buildUI()
+        window.center()
         window.makeKeyAndOrderFront(nil)
         refresh()
     }
@@ -76,80 +77,99 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func buildUI() {
-        let root = NSView(frame: NSMakeRect(0, 0, 720, 560))
+        let root = NSView(frame: NSMakeRect(0, 0, 940, 720))
+        root.autoresizingMask = [.width, .height]
         window.contentView = root
 
-        let title = label("Moomoo Paper Trader", size: 24)
+        let title = label("NASDAQ Multi-Symbol Paper Trading Desk", size: 24)
         title.font = NSFont.boldSystemFont(ofSize: 24)
-        title.frame = NSMakeRect(24, 505, 420, 32)
+        title.frame = NSMakeRect(24, 665, 760, 32)
+        title.autoresizingMask = [.minYMargin, .width]
         root.addSubview(title)
-        let subtitle = label("Native control panel · Moomoo SIMULATE only", size: 13)
+        let subtitle = label("Execution safety · independent strategies · AI research · Moomoo SIMULATE only", size: 13)
         subtitle.textColor = .secondaryLabelColor
-        subtitle.frame = NSMakeRect(26, 480, 400, 20)
+        subtitle.frame = NSMakeRect(26, 640, 760, 20)
+        subtitle.autoresizingMask = [.minYMargin, .width]
         root.addSubview(subtitle)
 
-        let runtime = NSBox(frame: NSMakeRect(20, 275, 680, 185))
-        runtime.title = "Runtime"
+        let runtime = NSBox(frame: NSMakeRect(20, 410, 900, 210))
+        runtime.autoresizingMask = [.width, .minYMargin]
+        runtime.title = "Live execution & safety"
         runtime.titlePosition = .atTop
         root.addSubview(runtime)
         let botCaption = label("Bot status")
-        botCaption.frame = NSMakeRect(18, 132, 100, 20)
+        botCaption.frame = NSMakeRect(18, 157, 110, 20)
         runtime.addSubview(botCaption)
-        status.frame = NSMakeRect(125, 132, 300, 20)
+        status.frame = NSMakeRect(140, 157, 485, 20)
+        status.autoresizingMask = [.width]
         runtime.addSubview(status)
         let accountCaption = label("Account")
-        accountCaption.frame = NSMakeRect(18, 107, 100, 20)
+        accountCaption.frame = NSMakeRect(18, 130, 110, 20)
         runtime.addSubview(accountCaption)
-        account.frame = NSMakeRect(125, 107, 300, 20)
+        account.frame = NSMakeRect(140, 130, 485, 20)
+        account.autoresizingMask = [.width]
         runtime.addSubview(account)
         let openDCaption = label("Moomoo OpenD")
-        openDCaption.frame = NSMakeRect(18, 82, 100, 20)
+        openDCaption.frame = NSMakeRect(18, 103, 110, 20)
         runtime.addSubview(openDCaption)
-        openD.frame = NSMakeRect(125, 82, 300, 20)
+        openD.frame = NSMakeRect(140, 103, 485, 20)
+        openD.autoresizingMask = [.width]
         runtime.addSubview(openD)
         let gatewayCaption = label("AI gateway")
-        gatewayCaption.frame = NSMakeRect(18, 57, 100, 20)
+        gatewayCaption.frame = NSMakeRect(18, 76, 110, 20)
         runtime.addSubview(gatewayCaption)
-        gateway.frame = NSMakeRect(125, 57, 300, 20)
+        gateway.frame = NSMakeRect(140, 76, 485, 20)
+        gateway.autoresizingMask = [.width]
         runtime.addSubview(gateway)
         let strategyCaption = label("Deployed config")
-        strategyCaption.frame = NSMakeRect(18, 32, 100, 20)
+        strategyCaption.frame = NSMakeRect(18, 49, 110, 20)
         runtime.addSubview(strategyCaption)
-        strategy.frame = NSMakeRect(125, 32, 300, 20)
+        strategy.frame = NSMakeRect(140, 49, 485, 20)
+        strategy.autoresizingMask = [.width]
         runtime.addSubview(strategy)
         let cacheCaption = label("1m cache")
-        cacheCaption.frame = NSMakeRect(18, 7, 100, 20)
+        cacheCaption.frame = NSMakeRect(18, 22, 110, 20)
         runtime.addSubview(cacheCaption)
-        cache.frame = NSMakeRect(125, 7, 300, 20)
+        cache.frame = NSMakeRect(140, 22, 485, 20)
+        cache.autoresizingMask = [.width]
         runtime.addSubview(cache)
         let refreshButton = button("Refresh", #selector(refresh))
-        refreshButton.frame = NSMakeRect(430, 125, 100, 30)
+        refreshButton.frame = NSMakeRect(650, 150, 105, 32)
+        refreshButton.autoresizingMask = [.minXMargin]
         runtime.addSubview(refreshButton)
         let startButton = button("Start paper bot", #selector(startBot))
-        startButton.frame = NSMakeRect(535, 125, 125, 30)
+        startButton.frame = NSMakeRect(760, 150, 120, 32)
+        startButton.autoresizingMask = [.minXMargin]
         runtime.addSubview(startButton)
         let stopButton = button("Stop bot", #selector(stopBot))
-        stopButton.frame = NSMakeRect(430, 85, 100, 30)
+        stopButton.frame = NSMakeRect(650, 108, 105, 32)
+        stopButton.autoresizingMask = [.minXMargin]
         runtime.addSubview(stopButton)
-        symbolField.frame = NSMakeRect(535, 88, 125, 24)
+        symbolField.frame = NSMakeRect(760, 112, 120, 26)
+        symbolField.autoresizingMask = [.minXMargin]
         symbolField.placeholderString = "US.MRNA"
         symbolField.isEditable = false
         runtime.addSubview(symbolField)
         let symbolButton = button("Apply portfolio", #selector(applySymbol))
-        symbolButton.frame = NSMakeRect(535, 53, 125, 30)
+        symbolButton.frame = NSMakeRect(650, 66, 230, 32)
+        symbolButton.autoresizingMask = [.minXMargin]
         runtime.addSubview(symbolButton)
 
-        let research = NSBox(frame: NSMakeRect(20, 20, 680, 240))
-        research.title = "Interval research"
+        let research = NSBox(frame: NSMakeRect(20, 20, 900, 375))
+        research.autoresizingMask = [.width, .height]
+        research.title = "Portfolio strategies, testing & AI research"
         research.titlePosition = .atTop
         root.addSubview(research)
-        sweepStatus.frame = NSMakeRect(18, 190, 600, 20)
+        sweepStatus.frame = NSMakeRect(18, 325, 610, 20)
+        sweepStatus.autoresizingMask = [.width, .minYMargin]
         research.addSubview(sweepStatus)
-        sweepMetrics.frame = NSMakeRect(18, 165, 640, 20)
+        sweepMetrics.frame = NSMakeRect(18, 300, 850, 20)
+        sweepMetrics.autoresizingMask = [.width, .minYMargin]
         sweepMetrics.font = NSFont.systemFont(ofSize: 11)
         sweepMetrics.textColor = .secondaryLabelColor
         research.addSubview(sweepMetrics)
-        winner.frame = NSMakeRect(18, 140, 640, 20)
+        winner.frame = NSMakeRect(18, 275, 850, 20)
+        winner.autoresizingMask = [.width, .minYMargin]
         winner.font = NSFont.systemFont(ofSize: 11)
         research.addSubview(winner)
         progress.isIndeterminate = false
@@ -157,27 +177,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         progress.maxValue = 1
         progress.doubleValue = 0
         progress.style = .bar
-        progress.frame = NSMakeRect(475, 188, 145, 16)
+        progress.frame = NSMakeRect(650, 325, 175, 16)
+        progress.autoresizingMask = [.minXMargin, .minYMargin]
         research.addSubview(progress)
         progressLabel.alignment = .right
-        progressLabel.frame = NSMakeRect(625, 188, 35, 20)
+        progressLabel.frame = NSMakeRect(835, 323, 45, 20)
+        progressLabel.autoresizingMask = [.minXMargin, .minYMargin]
         research.addSubview(progressLabel)
-        let scroll = NSScrollView(frame: NSMakeRect(18, 45, 644, 90))
+        let scroll = NSScrollView(frame: NSMakeRect(18, 58, 864, 210))
+        scroll.autoresizingMask = [.width, .height]
         scroll.hasVerticalScroller = true
         scroll.borderType = .bezelBorder
         output.isEditable = false
-        output.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        output.frame = scroll.contentView.bounds
+        output.autoresizingMask = [.width, .height]
+        output.isHorizontallyResizable = false
+        output.textContainer?.widthTracksTextView = true
+        output.font = NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
         output.backgroundColor = .controlBackgroundColor
         scroll.documentView = output
         research.addSubview(scroll)
         let sweepButton = button("Run 100k randomized + AI tests", #selector(startSweep))
-        sweepButton.frame = NSMakeRect(18, 12, 245, 30)
+        sweepButton.frame = NSMakeRect(18, 16, 255, 32)
+        sweepButton.autoresizingMask = [.maxXMargin, .maxYMargin]
         research.addSubview(sweepButton)
-        multiSymbolField.frame = NSMakeRect(275, 15, 210, 24)
+        multiSymbolField.frame = NSMakeRect(285, 19, 400, 26)
+        multiSymbolField.autoresizingMask = [.width, .maxYMargin]
         multiSymbolField.placeholderString = "US.MRNA,US.ANT,US.NVDA,US.MU,US.SNDK,US.OMH,US.APP"
         research.addSubview(multiSymbolField)
         let multiButton = button("Test symbols 1–10m", #selector(startMultiSymbolTest))
-        multiButton.frame = NSMakeRect(495, 12, 165, 30)
+        multiButton.frame = NSMakeRect(697, 16, 185, 32)
+        multiButton.autoresizingMask = [.minXMargin, .maxYMargin]
         research.addSubview(multiButton)
     }
 
@@ -229,7 +259,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.account.stringValue = value == nil ? "SIMULATE · account unavailable" : "\(environment) · \(accountID) · \(side) \(qty) · orders \(orders)"
             }
         }
-        runCommand("/usr/bin/python3", ["-c", "import sys,json; sys.path.insert(0,'\(root)'); from trading_config import active_symbols,research_dir; values=[]; [(lambda p,s: values.append(s.split('.')[-1]+':' + str((json.load(open(p)) if p.exists() else {}).get('state','NOT RUN'))))(research_dir(s)/'scheduler_state.json',s) for s in active_symbols()]; print('scheduled: '+', '.join(values))"]) { _, output in
+        runCommand("/usr/bin/python3", ["-c", "import sys,json,collections; sys.path.insert(0,'\(root)'); from trading_config import active_symbols,research_dir; states=[(json.load(open(p)) if p.exists() else {}).get('state','NOT RUN') for s in active_symbols() for p in [research_dir(s)/'scheduler_state.json']]; c=collections.Counter(states); print('Research queue · ' + ' · '.join(str(c[k])+' '+k.lower() for k in sorted(c)))"]) { _, output in
             DispatchQueue.main.async {
                 if self.sweepProcess?.isRunning != true {
                     let value = output.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -237,13 +267,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
         }
-        runCommand("/usr/bin/python3", ["-c", "import sys,json; sys.path.insert(0,'\(root)'); from trading_config import active_symbols,strategy_path; print(' | '.join(f'{s.split(\".\")[-1]}:{(p:=json.load(open(strategy_path(s)))).get(\"interval\",\"?\")}m/L{p.get(\"params\",{}).get(\"grid_lookback\",\"?\")}' for s in active_symbols()))"]) { _, output in
+        runCommand("/usr/bin/python3", ["-c", "import sys,json; sys.path.insert(0,'\(root)'); from trading_config import active_symbols,strategy_path; values=[json.load(open(strategy_path(s))) for s in active_symbols()]; print(str(len(values))+' independent configs · intervals '+','.join(str(x) for x in sorted(set(p.get('interval','?') for p in values)))+' minutes · per-symbol allocation '+format(95/len(values),'.2f')+'%')"]) { _, output in
             DispatchQueue.main.async { self.strategy.stringValue = output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "UNAVAILABLE" : output.trimmingCharacters(in: .whitespacesAndNewlines) }
         }
-        runCommand("/usr/bin/python3", ["-c", "import sys,sqlite3; sys.path.insert(0,'\(root)'); from trading_config import active_symbols; db=sqlite3.connect('\(root)/quant_dashboard.sqlite3'); print(' | '.join(s.split('.')[-1]+':' + str(db.execute(\"select count(*) from candles where symbol=? and interval_minutes=1\",(s,)).fetchone()[0]) for s in active_symbols()))"]) { _, output in
+        runCommand("/usr/bin/python3", ["-c", "import sys,sqlite3; sys.path.insert(0,'\(root)'); from trading_config import active_symbols; db=sqlite3.connect('\(root)/quant_dashboard.sqlite3'); values=[db.execute(\"select count(*) from candles where symbol=? and interval_minutes=1\",(s,)).fetchone()[0] for s in active_symbols()]; print(str(sum(x>0 for x in values))+'/'+str(len(values))+' symbols ready · '+format(sum(values),',')+' cached 1-minute candles')"]) { _, output in
             DispatchQueue.main.async { self.cache.stringValue = output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "UNAVAILABLE" : output.trimmingCharacters(in: .whitespacesAndNewlines) }
         }
-        runCommand("/usr/bin/python3", ["-c", "import sys,json; sys.path.insert(0,'\(root)'); from trading_config import active_symbols,strategy_path; print('Independent configs: ' + ' | '.join(s.split('.')[-1]+':' + str(json.load(open(strategy_path(s))).get('run_id','unknown')) for s in active_symbols()))"]) { _, output in
+        runCommand("/usr/bin/python3", ["-c", "import sys,json,collections; sys.path.insert(0,'\(root)'); from trading_config import active_symbols,strategy_path; ids=[str(json.load(open(strategy_path(s))).get('run_id','unknown')) for s in active_symbols()]; baseline=sum(x=='INITIAL-BASELINE' for x in ids); print('Config sources · '+str(len(ids)-baseline)+' research-selected · '+str(baseline)+' baseline · each promoted independently')"]) { _, output in
             DispatchQueue.main.async { self.winner.stringValue = output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Independent per-symbol configs unavailable" : output.trimmingCharacters(in: .whitespacesAndNewlines) }
         }
         runCommand("/usr/bin/python3", ["-c", "import sys,glob,json; sys.path.insert(0,'\(root)'); from trading_config import active_symbol,active_symbols,research_dir,strategy_path; f=sorted(glob.glob(str(research_dir(active_symbol())/'runs/*/summary.json'))); d=json.load(open(f[-1])) if f else {}; r=d.get('results') or []; configs=[json.load(open(strategy_path(s))) for s in active_symbols()]; print(json.dumps({'run':f[-1].split('/')[-2] if f else 'none','candidates':d.get('randomized_candidates',0),'ai':d.get('ai_proposals',0),'saved':d.get('profitable_saved',0),'rows':['%s  %+.3f%%  %s trades' % (x.get('interval','?'), (x.get('best') or {}).get('stats',{}).get('total_return_pct',0), (x.get('best') or {}).get('stats',{}).get('trades',0)) for x in r],'configs':configs}))"]) { _, output in
