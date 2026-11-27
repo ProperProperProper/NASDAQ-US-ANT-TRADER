@@ -197,18 +197,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         output.backgroundColor = .controlBackgroundColor
         scroll.documentView = output
         research.addSubview(scroll)
-        let sweepButton = button("AI optimise primary (100k)", #selector(startSweep))
-        sweepButton.frame = NSMakeRect(18, 16, 255, 32)
+        let sweepButton = button("Test 1–10m → AI optimise every symbol", #selector(startSweep))
+        sweepButton.frame = NSMakeRect(18, 16, 335, 32)
         sweepButton.autoresizingMask = [.maxXMargin, .maxYMargin]
         research.addSubview(sweepButton)
-        multiSymbolField.frame = NSMakeRect(285, 19, 400, 26)
+        multiSymbolField.frame = NSMakeRect(365, 19, 517, 26)
         multiSymbolField.autoresizingMask = [.width, .maxYMargin]
         multiSymbolField.placeholderString = "US.MRNA,US.ANT,US.NVDA,US.MU,US.SNDK,US.OMH,US.APP"
         research.addSubview(multiSymbolField)
-        let multiButton = button("Compare portfolio 1–10m", #selector(startMultiSymbolTest))
-        multiButton.frame = NSMakeRect(697, 16, 185, 32)
-        multiButton.autoresizingMask = [.minXMargin, .maxYMargin]
-        research.addSubview(multiButton)
     }
 
     func runCommand(_ path: String, _ arguments: [String], completion: @escaping (Int32, String) -> Void) {
@@ -339,11 +335,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func startSweep() {
         if sweepProcess?.isRunning == true { return }
-        sweepStatus.stringValue = "Running 100k randomized tests over 5 sessions…"
-        sweepMetrics.stringValue = "Candidates: 0 / 100,000 · AI proposals: shown on completion · Profitable saved: 0"
+        sweepStatus.stringValue = "Benchmarking every symbol across 1–10m, then AI-optimising each config…"
+        sweepMetrics.stringValue = "Stage 1: 70 interval tests · Stage 2: independent 100k + AI search per symbol · 4 workers"
         progress.doubleValue = 0
         progressLabel.stringValue = "0%"
-        output.string = "INTERVAL   RETURN       EQUITY       TRADES\nWaiting for interval results…"
+        output.string = "PORTFOLIO PIPELINE\n1. Benchmark all symbols at 1–10m\n2. AI optimise each symbol independently\nWaiting to start…\n"
         sweepBuffer = ""
         let root = projectRoot
         runCommand("/usr/bin/nc", ["-z", "127.0.0.1", "8788"]) { code, _ in
@@ -433,7 +429,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
         let today = String(ISO8601DateFormatter().string(from: Date()).prefix(10))
-        process.arguments = ["\(root)/scripts/app_minute_interval_sweep.py", "--symbol", symbolField.stringValue, "--start", "2026-01-01", "--end", today, "--total-candidates", "100000", "--ai"]
+        process.arguments = ["\(root)/scripts/portfolio_ai_pipeline.py", "--symbols", multiSymbolField.stringValue, "--total-candidates", "100000", "--workers", "4"]
         process.currentDirectoryURL = URL(fileURLWithPath: root)
         let pipe = Pipe()
         process.standardOutput = pipe
@@ -450,7 +446,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pipe.fileHandleForReading.readabilityHandler = nil
             DispatchQueue.main.async {
                 if task.terminationStatus == 0 { self.progress.doubleValue = 1; self.progressLabel.stringValue = "100%" }
-                self.sweepStatus.stringValue = task.terminationStatus == 0 ? "Sweep complete" : "Sweep failed (exit \(task.terminationStatus))"
+                self.sweepStatus.stringValue = task.terminationStatus == 0 ? "Portfolio benchmark and AI optimisation complete" : "Portfolio pipeline failed (exit \(task.terminationStatus))"
                 if task.terminationStatus == 0 { self.refresh() }
             }
         }
@@ -466,6 +462,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         sweepBuffer = lines.last ?? ""
         for line in lines.dropLast() {
             guard let data = line.data(using: .utf8), let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+            if let stage = value["pipeline_stage"] as? String {
+                let symbol = value["symbol"] as? String ?? "portfolio"
+                switch stage {
+                case "BENCHMARK_1_TO_10": self.sweepStatus.stringValue = "Stage 1/2 · benchmarking all symbols across 1–10m"
+                case "AI_OPTIMISE": self.sweepStatus.stringValue = "Stage 2/2 · AI optimising \(symbol) independently"
+                case "SYMBOL_COMPLETE":
+                    let index = value["index"] as? Int ?? 0
+                    let total = value["total_symbols"] as? Int ?? 1
+                    self.sweepMetrics.stringValue = "AI optimisation complete for \(index)/\(total) symbols"
+                    self.progress.doubleValue = Double(index) / Double(max(1, total))
+                    self.progressLabel.stringValue = "\(Int(self.progress.doubleValue * 100))%"
+                case "WAITING_FOR_RESEARCH_LOCK": self.sweepStatus.stringValue = "Waiting for scheduled research to release \(symbol)…"
+                default: break
+                }
+            }
             if let fraction = value["progress"] as? Double {
                 progress.doubleValue = min(1, max(0, fraction))
                 progressLabel.stringValue = "\(Int(fraction * 100))%"
