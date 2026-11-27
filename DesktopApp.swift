@@ -243,18 +243,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         runCommand("/usr/bin/python3", ["-c", "import sys,sqlite3; sys.path.insert(0,'\(root)'); from trading_config import active_symbols; db=sqlite3.connect('\(root)/quant_dashboard.sqlite3'); print(' | '.join(s.split('.')[-1]+':' + str(db.execute(\"select count(*) from candles where symbol=? and interval_minutes=1\",(s,)).fetchone()[0]) for s in active_symbols()))"]) { _, output in
             DispatchQueue.main.async { self.cache.stringValue = output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "UNAVAILABLE" : output.trimmingCharacters(in: .whitespacesAndNewlines) }
         }
-        runCommand("/usr/bin/python3", ["-c", "import sys,glob,json; sys.path.insert(0,'\(root)'); from trading_config import active_symbol,research_dir; files=sorted(glob.glob(str(research_dir(active_symbol())/'runs/*/summary.json'))); d=json.load(open(files[-1])) if files else {}; w=d.get('winner') or {}; p=w.get('params') or {}; print('Winning strategy: ' + str(w.get('interval','none')) + ' · PnL ' + str(w.get('total_return_pct','?')) + '% · DD ' + str(w.get('max_drawdown_pct','?')) + '% · trades ' + str(w.get('trades','?')) + ' · params ' + json.dumps(p, separators=(',',':')))"]) { _, output in
-            DispatchQueue.main.async { self.winner.stringValue = output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Winning strategy: no completed result" : output.trimmingCharacters(in: .whitespacesAndNewlines) }
+        runCommand("/usr/bin/python3", ["-c", "import sys,json; sys.path.insert(0,'\(root)'); from trading_config import active_symbols,strategy_path; print('Independent configs: ' + ' | '.join(s.split('.')[-1]+':' + str(json.load(open(strategy_path(s))).get('run_id','unknown')) for s in active_symbols()))"]) { _, output in
+            DispatchQueue.main.async { self.winner.stringValue = output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Independent per-symbol configs unavailable" : output.trimmingCharacters(in: .whitespacesAndNewlines) }
         }
-        runCommand("/usr/bin/python3", ["-c", "import sys,glob,json; sys.path.insert(0,'\(root)'); from trading_config import active_symbol,research_dir; f=sorted(glob.glob(str(research_dir(active_symbol())/'runs/*/summary.json'))); d=json.load(open(f[-1])) if f else {}; r=d.get('results') or []; print(json.dumps({'run':f[-1].split('/')[-2] if f else 'none','candidates':d.get('randomized_candidates',0),'ai':d.get('ai_proposals',0),'saved':d.get('profitable_saved',0),'rows':['%s  %+.3f%%  %s trades' % (x.get('interval','?'), (x.get('best') or {}).get('stats',{}).get('total_return_pct',0), (x.get('best') or {}).get('stats',{}).get('trades',0)) for x in r]}))"]) { _, output in
+        runCommand("/usr/bin/python3", ["-c", "import sys,glob,json; sys.path.insert(0,'\(root)'); from trading_config import active_symbol,active_symbols,research_dir,strategy_path; f=sorted(glob.glob(str(research_dir(active_symbol())/'runs/*/summary.json'))); d=json.load(open(f[-1])) if f else {}; r=d.get('results') or []; configs=[json.load(open(strategy_path(s))) for s in active_symbols()]; print(json.dumps({'run':f[-1].split('/')[-2] if f else 'none','candidates':d.get('randomized_candidates',0),'ai':d.get('ai_proposals',0),'saved':d.get('profitable_saved',0),'rows':['%s  %+.3f%%  %s trades' % (x.get('interval','?'), (x.get('best') or {}).get('stats',{}).get('total_return_pct',0), (x.get('best') or {}).get('stats',{}).get('trades',0)) for x in r],'configs':configs}))"]) { _, output in
             DispatchQueue.main.async {
                 guard let data = output.data(using: .utf8), let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
                 let candidates = value["candidates"] as? Int ?? 0
                 let ai = value["ai"] as? Int ?? 0
                 let saved = value["saved"] as? Int ?? 0
                 self.sweepMetrics.stringValue = "Candidates: \(candidates) · AI proposals: \(ai) · Profitable saved: \(saved) · Run \(value["run"] as? String ?? "none")"
-                if let rows = value["rows"] as? [String] {
-                    self.output.string = "INTERVAL   RETURN       EQUITY       TRADES\n" + rows.joined(separator: "\n")
+                if self.sweepProcess?.isRunning != true, let configs = value["configs"] as? [[String: Any]] {
+                    let allocation = configs.isEmpty ? 0.0 : 95.0 / Double(configs.count)
+                    let configRows = configs.map { config -> String in
+                        let symbol = (config["symbol"] as? String ?? "?").replacingOccurrences(of: "US.", with: "")
+                        let interval = config["interval"] as? Int ?? 0
+                        let params = config["params"] as? [String: Any] ?? [:]
+                        let lookback = params["grid_lookback"] as? Int ?? 0
+                        let grids = params["grid_intervals"] as? Int ?? 0
+                        let entry = params["entry_mode"] as? String ?? "?"
+                        let exit = params["exit_mode"] as? String ?? "?"
+                        let takeProfit = params["take_profit_pct"] as? Double ?? 0
+                        let stopLoss = params["stop_loss_pct"] as? Double ?? 0
+                        let trail = params["trailing_stop_pct"] as? Double ?? 0
+                        return String(format: "%-5@ %2dm L%-3d G%-2d alloc %5.2f%% TP %4.2f%% SL %5.2f%% TR %4.2f%%  %@ / %@", symbol as NSString, interval, lookback, grids, allocation, takeProfit * 100, stopLoss * 100, trail * 100, entry, exit)
+                    }
+                    self.output.string = "SYMBOL  CONFIG (independent per-symbol paper strategy)\n" + configRows.joined(separator: "\n")
                 }
             }
         }
