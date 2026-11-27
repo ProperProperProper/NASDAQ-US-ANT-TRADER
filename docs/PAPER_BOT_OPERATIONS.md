@@ -22,13 +22,11 @@ MLX Sentinel. Moomoo OpenD remains a separate broker application. The Moomoo
 and MLX integrations remain Python workers inside the Rust-supervised runtime.
 Only the engine's local launch plist supplies `US_ANT_PAPER_ACCOUNT_ID`.
 
-Research runs in a separate low-priority process. Completed promotions update
-the strategy file atomically; they do not restart the paper bot, interrupt
-orders, or reset its in-memory execution state. A changed candle interval is
-picked up on the next normal bot launch, while compatible parameter changes are
-reloaded on the next completed candle. Automatic promotion is currently held
-until the research sweep adds a chronological train/validation/test split with
-an untouched final set; research results are still recorded for review.
+Research runs in a separate low-priority process. Eligible winners are
+automatically queued. The paper bot checks its SIMULATE broker position and
+pending orders before applying a queued strategy atomically; promotion does
+not restart the bot or reset its in-memory execution state. The new interval
+and parameters are picked up in the next normal polling cycle.
 
 ## OpenD setup
 
@@ -107,7 +105,9 @@ date window, costs, and strategy settings are the same.
 - Keep the native app and bot local. Do not publish the bot through an
   unauthenticated reverse proxy.
 - HARD RULE: research promotion requires at least two completed US.ANT sessions
-  and at least two trades; weaker results remain held for research.
+  and at least two trades, positive return after costs, and a better result
+  than the current paper strategy on the tested data. Eligible winners are
+  promoted automatically through the broker-verified flat-position gate.
 
 ## Troubleshooting
 

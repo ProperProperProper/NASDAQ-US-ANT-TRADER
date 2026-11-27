@@ -1,6 +1,5 @@
 import Cocoa
 
-let botLabel = "com.local.us-ant-engine"
 let botPlist = "/Users/local.local/Library/LaunchAgents/com.local.us-ant-engine.plist"
 let engineBinary = "/Users/local.local/Projects/TradingSystem/ai_gateway/target/release/trading_engine"
 
@@ -19,7 +18,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let progressLabel = NSTextField(labelWithString: "0%")
     let output = NSTextView()
     var sweepProcess: Process?
-    var gatewayProcess: Process?
     var sweepBuffer = ""
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -46,7 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        let children = [sweepProcess, gatewayProcess].compactMap { $0 }.filter { $0.isRunning }
+        let children = [sweepProcess].compactMap { $0 }.filter { $0.isRunning }
         guard !children.isEmpty else { return .terminateNow }
         for child in children { child.terminate() }
         DispatchQueue.global(qos: .utility).async {

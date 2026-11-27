@@ -1,12 +1,12 @@
 //! Single launchd-owned supervisor for the US.ANT paper and AI runtime.
-use std::{env, fs::OpenOptions, io::{Read, Write}, os::unix::{fs::PermissionsExt, net::UnixStream}, path::{Path, PathBuf}, process::{Child, Command, Stdio}, sync::atomic::{AtomicBool, Ordering}, thread, time::{Duration, Instant}};
+use std::{env, fs::OpenOptions, io::{Read, Write}, os::unix::{fs::PermissionsExt, net::UnixStream, process::CommandExt}, path::{Path, PathBuf}, process::{Child, Command, Stdio}, sync::atomic::{AtomicBool, Ordering}, thread, time::{Duration, Instant}};
 
 const ROOT: &str = "/Users/local.local/Projects/TradingSystem";
 const SOCKET: &str = "/tmp/us-ant-trading-engine.sock";
 const BOT_PAUSED: &str = "/Users/local.local/Projects/TradingSystem/.trading_engine_bot_paused";
 static STOP: AtomicBool = AtomicBool::new(false);
 extern "C" fn handle_signal(_: i32) { STOP.store(true, Ordering::SeqCst); }
-unsafe extern "C" { fn signal(number: i32, handler: extern "C" fn(i32)) -> usize; fn kill(pid: i32, number: i32) -> i32; }
+unsafe extern "C" { fn signal(number: i32, handler: extern "C" fn(i32)) -> usize; fn kill(pid: i32, number: i32) -> i32; fn setpgid(pid: i32, pgid: i32) -> i32; }
 
 struct Worker {
     name: &'static str,
@@ -25,6 +25,17 @@ impl Worker {
     }
 
     fn start(&mut self, account: &str) -> std::io::Result<()> {
+        let marker = match self.name {
+            "paper" => "competition_bot.py ANT --acc-id",
+            "research" => "continuous_research_scheduler.py",
+            "gateway" => "multi-model-ai-gateway serve",
+            "mlx" => "mlx_sentinel.server",
+            _ => self.name,
+        };
+        let processes = Command::new("/bin/ps").args(["-axo", "pid=,command="]).output()?;
+        if String::from_utf8_lossy(&processes.stdout).lines().any(|line| line.contains(marker)) {
+            return Err(std::io::Error::other(format!("existing {} process found; refusing duplicate", self.name)));
+        }
         let log = Path::new(ROOT).join(self.log);
         let stdout = OpenOptions::new().create(true).append(true).open(&log)?;
         let stderr = stdout.try_clone()?;
@@ -34,6 +45,11 @@ impl Worker {
             .env("OMP_NUM_THREADS", "4").env("OPENBLAS_NUM_THREADS", "4")
             .env("MKL_NUM_THREADS", "4").env("VECLIB_MAXIMUM_THREADS", "4")
             .env("US_ANT_RESEARCH_WORKERS", "4");
+        unsafe {
+            command.pre_exec(|| {
+                if setpgid(0, 0) == 0 { Ok(()) } else { Err(std::io::Error::last_os_error()) }
+            });
+        }
         let child = command.spawn()?;
         eprintln!("started {} pid={}", self.name, child.id());
         self.child = Some(child);
@@ -42,12 +58,12 @@ impl Worker {
 
     fn stop(&mut self) {
         if let Some(mut child) = self.child.take() {
-            unsafe { kill(child.id() as i32, 15); }
+            unsafe { kill(-(child.id() as i32), 15); }
             for _ in 0..30 {
                 if child.try_wait().ok().flatten().is_some() { return; }
                 thread::sleep(Duration::from_millis(100));
             }
-            let _ = child.kill();
+            unsafe { kill(-(child.id() as i32), 9); }
             let _ = child.wait();
         }
     }

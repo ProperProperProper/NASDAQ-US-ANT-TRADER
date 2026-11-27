@@ -30,9 +30,8 @@ MAX_KNOWN_SUCCESSFUL_PER_INTERVAL = 5
 # Use four isolated evaluator workers so research finishes promptly while
 # remaining well below the machine-wide resource ceiling on this 10-core Mac.
 RESEARCH_WORKERS = max(1, min(4, int(os.environ.get("US_ANT_RESEARCH_WORKERS", "4"))))
-# Automatic promotion is permitted only into the local SIMULATE paper bot.
-# The evaluator includes slippage and promotion is restricted to a profitable
-# candidate that beats the currently active parameters on the active interval.
+# Eligible candidates are promoted automatically through the paper bot's
+# broker-verified flat-position gate; never publish directly from research.
 AUTO_PROMOTION_ENABLED = True
 MIN_PROMOTION_SESSIONS = 2
 MIN_PROMOTION_TRADES = 2
@@ -251,34 +250,20 @@ def ai_candidates(interval: int) -> list[dict]:
 
 
 def promote_winner(winner: dict) -> dict:
-    """Publish a tested winner without interrupting the running paper bot."""
+    """Queue a tested winner for the paper bot's broker-verified flat gate."""
     interval = int(winner["interval"].removesuffix("m"))
+    if interval not in range(1, MAX_INTERVAL_MINUTES + 1):
+        raise ValueError("promotion interval must be between 1 and 10 minutes")
     params = dict(winner["params"])
-    strategy_path = ROOT / "paper_bot_live_strategy.json"
     payload = {
         "symbol": "US.ANT", "interval": interval, "params": params,
         "run_id": winner["run_id"], "updated_at": pd.Timestamp.now(tz="UTC").isoformat(),
         "mode": "SIMULATE",
     }
-    try:
-        state = json.loads((ROOT / "competition_bot_state.json").read_text())
-        marked_qty = float((state.get("position_mark") or {}).get("qty", 0) or 0)
-        pending = bool(state.get("pending"))
-    except (OSError, TypeError, ValueError, json.JSONDecodeError):
-        marked_qty, pending = 0.0, False
-    if marked_qty > 0 or pending:
-        temporary = PENDING_PROMOTION_PATH.with_name(PENDING_PROMOTION_PATH.name + ".tmp")
-        temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-        temporary.replace(PENDING_PROMOTION_PATH)
-        return {"state": "DEFERRED_POSITION_OPEN", "reason": "promotion waits for flat broker position", "pending_path": str(PENDING_PROMOTION_PATH), **payload}
-    temporary = strategy_path.with_name(strategy_path.name + ".tmp")
+    temporary = PENDING_PROMOTION_PATH.with_name(PENDING_PROMOTION_PATH.name + ".tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    temporary.replace(strategy_path)
-
-    # The live bot reloads compatible parameters at each new candle. Do not
-    # restart launchd here: an automatic research promotion must never
-    # interrupt an active paper order or reset in-memory execution state.
-    return payload
+    temporary.replace(PENDING_PROMOTION_PATH)
+    return {"state": "QUEUED_BROKER_CHECK", "reason": "paper bot applies when SIMULATE broker is flat with no pending order", "pending_path": str(PENDING_PROMOTION_PATH), **payload}
 
 
 def promotion_gate(winner: dict | None, current_stats: dict | None = None, completed_sessions: int = 0) -> tuple[bool, str]:
@@ -292,7 +277,9 @@ def promotion_gate(winner: dict | None, current_stats: dict | None = None, compl
         return False, f"requires at least {MIN_PROMOTION_TRADES} completed trades"
     if float(stats.get("total_return_pct", 0)) <= 0:
         return False, "candidate is not profitable after costs"
-    if current_stats is not None and float(stats.get("total_return_pct", 0)) <= float(current_stats.get("total_return_pct", 0)):
+    if current_stats is None:
+        return False, "current paper strategy comparison unavailable"
+    if float(stats.get("total_return_pct", 0)) <= float(current_stats.get("total_return_pct", 0)):
         return False, "candidate does not beat current active parameters"
     return True, "profitable candidate beats current active parameters"
 

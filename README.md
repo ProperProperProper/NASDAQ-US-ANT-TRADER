@@ -131,15 +131,15 @@ The GUI shows bot health and account, provides refresh/start/stop controls, maps
 interval to return, ending equity, and trade count, and runs the 1m-through-10m sweep in the
 background. The scheduler runs a larger AI-assisted parameter sweep during US pre-market and
 smaller fine-tuning sweeps every 15 minutes during regular trading hours. Grid interval count,
-lookback, entry/exit mode, and bounded trailing parameters are tested. A completed sweep records
-candidate interval and parameter sets for review; it does not automatically change the SIMULATE
-paper bot. Closing the GUI does not stop the paper bot. Each research sweep uses up to four
+lookback, entry/exit mode, and bounded trailing parameters are tested. An eligible winner is
+automatically queued for the SIMULATE paper bot, which applies it only when the broker is flat
+with no pending order. Closing the GUI does not stop the paper bot. Each research sweep uses up to four
 evaluator workers at low priority; the engine keeps paper execution in a separate worker.
 
 The engine's research worker checks continuously every minute. It runs
 for a new cached US session immediately, then reruns on the same cached data 15
 minutes after the previous successful sweep completes. Research runs at low
-CPU priority in its own process. Automatic promotion is held until the sweep
-has a chronological train/validation/test split with an untouched final set.
-It prevents overlapping sweeps and records its state in the scheduler state
+CPU priority in its own process. Promotion requires at least two completed
+sessions, two trades, positive returns after costs, and a better result than
+the current paper strategy on the tested data. It prevents overlapping sweeps and records its state in the scheduler state
 file.

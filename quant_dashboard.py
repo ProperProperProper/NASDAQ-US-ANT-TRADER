@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Local Moomoo-backed tester/optimizer dashboard with paper execution.
 
-The backtest side fetches interval-specific US.ANT candles from Moomoo OpenD,
+The backtest side fetches 1-minute US.ANT candles from Moomoo OpenD,
 stores them in SQLite, and evaluates the bounded test window. The execution
 side starts the local bot with TrdEnv.SIMULATE only; it refuses accounts that
 are not reported as SIMULATE by OpenD.
@@ -17,6 +17,7 @@ import json
 import logging
 import math
 import os
+import plistlib
 import subprocess
 import threading
 import time
@@ -29,7 +30,7 @@ from typing import Any
 import pandas as pd
 from urllib.parse import urlparse
 
-from competition_bot import BAR_INTERVAL_TYPES, DEFAULT_BAR_INTERVAL, STANDARD_PAPER_ACCOUNT_ID, CompetitionBot
+from competition_bot import BAR_INTERVAL_TYPES, DEFAULT_BAR_INTERVAL, STANDARD_PAPER_ACCOUNT_ID
 from BBI_5m_Backtest.local_quant_tester import charts
 from strategy_57pct import BASELINE, run as strategy_run, walk_forward_optimize, walk_forward_replay
 from strategy_57pct import stats as strategy_stats
@@ -43,24 +44,29 @@ from quant_api import data_api, risk_json, strategy_api, write_live_strategy
 ROOT = Path(__file__).resolve().parent
 PORT = 8780
 MAX_BACKTEST_DAYS = 30
-PAPER_TRADING_ENABLED = True
 ENGINE_BINARY = ROOT / "ai_gateway/target/release/trading_engine"
-PAPER_ACCOUNT_ID = STANDARD_PAPER_ACCOUNT_ID
+ENGINE_PLIST = Path.home() / "Library/LaunchAgents/com.local.us-ant-engine.plist"
+
+
+def configured_paper_account() -> int:
+    if STANDARD_PAPER_ACCOUNT_ID:
+        return STANDARD_PAPER_ACCOUNT_ID
+    try:
+        with ENGINE_PLIST.open("rb") as handle:
+            return int(plistlib.load(handle)["EnvironmentVariables"]["US_ANT_PAPER_ACCOUNT_ID"])
+    except (OSError, KeyError, TypeError, ValueError):
+        return 0
+
+
+PAPER_ACCOUNT_ID = configured_paper_account()
 BOT_STATE_PATH = ROOT / "competition_bot_state.json"
 INSTANCE_LOCK_PATH = Path(__file__).with_name("quant_dashboard.lock")
 SYMBOL = "US.ANT"
 INTERVAL_MINUTES = 10
-bot_lock = threading.Lock()
-bot_instance: CompetitionBot | None = None
-bot_thread: threading.Thread | None = None
-last_backtest: dict[str, Any] = {}
 backtest_lock = threading.Lock()
 backtest_job: dict[str, Any] = {"state": "idle", "done": 0, "total": 0, "message": "Idle"}
 backtest_cancel = threading.Event()
 
-
-def optimize(frame, base, capital, allocation, slip, commission, progress=None):
-    return walk_forward_optimize(frame, base, capital, allocation, slip, commission, progress)
 
 def normalize_date(value: Any, field: str) -> str:
     try:
@@ -103,18 +109,10 @@ def execution_status() -> dict[str, Any]:
         persisted_interval = bot_state.get("strategy_interval")
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         pass
-    with bot_lock:
-        active = bot_instance is not None and bot_instance.running
-        status = {
-            "active": active,
-            "symbols": list(bot_instance.symbols) if bot_instance else [],
-            "account_index": bot_instance.acc_index if bot_instance else None,
-            "account_id": bot_instance.acc_id if bot_instance else None,
-            "mode": "SIMULATE" if active else "STOPPED",
-            "position": position_mark,
-        }
-    if active:
-        return status
+    selected_interval = int(persisted_interval) if persisted_interval in BAR_INTERVAL_TYPES else DEFAULT_BAR_INTERVAL
+    status = {"active": False, "symbols": [], "account_index": None,
+              "account_id": PAPER_ACCOUNT_ID or None, "mode": "STOPPED",
+              "bar_interval": selected_interval, "position": position_mark}
     try:
         result = subprocess.run(
             [str(ENGINE_BINARY), "status"], capture_output=True, text=True, timeout=2, check=False,
@@ -127,7 +125,7 @@ def execution_status() -> dict[str, Any]:
                 "active": True,
                 "symbols": ["US.ANT"],
                 "account_index": None,
-                "account_id": STANDARD_PAPER_ACCOUNT_ID,
+                "account_id": PAPER_ACCOUNT_ID,
                 "mode": "SIMULATE",
                 "source": "rust_engine",
                 "pid": int(pid) if pid and pid.isdigit() else None,
@@ -139,28 +137,16 @@ def execution_status() -> dict[str, Any]:
     return status
 
 
-def stop_bot() -> None:
-    global bot_instance, bot_thread
-    with bot_lock:
-        if bot_instance:
-            bot_instance.stop()
-        thread = bot_thread
-    if thread and thread.is_alive():
-        thread.join(timeout=5)
-    with bot_lock:
-        bot_instance = None
-        bot_thread = None
-
-
 def stop_external_bot() -> None:
-    subprocess.run(
+    result = subprocess.run(
         [str(ENGINE_BINARY), "bot-stop"],
         capture_output=True, text=True, timeout=5, check=False,
     )
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or "could not stop paper bot worker")
 
 
 def start_bot(symbols: list[str], acc_index: int, bar_interval: int = DEFAULT_BAR_INTERVAL) -> dict[str, Any]:
-    global bot_instance, bot_thread
     if [str(symbol).upper().removeprefix("US.") for symbol in symbols] != ["ANT"]:
         raise ValueError("only US.ANT is permitted by the active paper bot")
     if bar_interval not in BAR_INTERVAL_TYPES:
@@ -168,7 +154,7 @@ def start_bot(symbols: list[str], acc_index: int, bar_interval: int = DEFAULT_BA
     available = accounts()
     account = next((item for item in available if int(item.get("acc_id", 0)) == PAPER_ACCOUNT_ID), None)
     if not account or str(account.get("trd_env", "")).upper() != "SIMULATE":
-        raise ValueError(f"Required standard SIMULATE account {STANDARD_PAPER_ACCOUNT_ID} is unavailable")
+        raise ValueError(f"Required standard SIMULATE account {PAPER_ACCOUNT_ID} is unavailable")
     published_interval = int(json.loads((ROOT / "paper_bot_live_strategy.json").read_text())["interval"])
     if bar_interval != published_interval:
         raise ValueError("change the published paper strategy interval before starting the bot")
@@ -223,7 +209,7 @@ def do_backtest(payload: dict[str, Any], progress=None) -> dict[str, Any]:
     # Every displayed result is stitched from unseen walk-forward folds. There
     # is no full-period in-sample fallback, even if the checkbox is unticked.
     if payload.get("optimize", True):
-        optimisation = optimize(frame, base, capital, allocation, slip, commission, progress)
+        optimisation = walk_forward_optimize(frame, base, capital, allocation, slip, commission, progress)
         x, trades, data = walk_forward_replay(frame, optimisation, capital, allocation, slip, commission)
     else:
         # A disabled optimiser still runs the selected daily baseline. An empty
@@ -255,8 +241,6 @@ def do_backtest(payload: dict[str, Any], progress=None) -> dict[str, Any]:
         "promoted_live_strategy": promoted,
         "note": "Strict walk-forward only: each parameter set was selected on earlier Moomoo candles and evaluated only on the following unseen fold. Causal candle-open grid crossings, same-candle open fills in research, one long position; close is plotted but never used as a signal." + (" No valid optimisation candidates met the minimum trade threshold." if not optimisation else ""),
     }
-    global last_backtest
-    last_backtest = response
     return response
 
 
@@ -312,7 +296,7 @@ HTML = r'''<!doctype html>
 <script>
 const el=id=>document.getElementById(id);const money=x=>Number(x).toFixed(2);const pct=x=>Number(x).toFixed(2)+'%';const testerInterval=el('interval');if(testerInterval){testerInterval.innerHTML='<option value="1">1 minute</option><option value="2">2 minutes</option><option value="3">3 minutes</option><option value="4">4 minutes</option><option value="5">5 minutes</option><option value="6">6 minutes</option><option value="7">7 minutes</option><option value="8">8 minutes</option><option value="9">9 minutes</option><option value="10">10 minutes</option>';testerInterval.value='10';}
 async function runTester(){el('testStatus').textContent='Fetching Moomoo candles and running…';const payload={symbol:el('symbol').value||'US.ANT',start:el('start').value,end:el('end').value,interval:Number(el('interval').value),capital:Number(el('capital').value),allocation:Number(el('allocation').value),slippage_bps:Number(el('slippage').value),optimize:el('optimize').checked};try{const res=await fetch('/api/backtest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const d=await res.json();if(!res.ok)throw Error(d.error||'Tester failed');const s=d.stats;const vals=[['Return',pct(s.total_return_pct)],['Ending equity',money(s.ending_equity)],['Max drawdown',pct(s.max_drawdown_pct)],['Trades',s.trades],['Win rate',pct(s.win_rate_pct)],['Profit factor',s.profit_factor],['Avg trade',pct(s.average_trade_pct)],['Sharpe',s.sharpe_approx]];el('summary').innerHTML='<h2>US.ANT tester results</h2><p class="muted">Moomoo candles: '+d.candles_fetched+' · SQLite run: '+d.run_id+'</p><div class="cards">'+vals.map(v=>'<div class="card"><span>'+v[0]+'</span><strong class="'+(String(v[1]).startsWith('-')?'neg':'pos')+'">'+v[1]+'</strong></div>').join('')+'</div>';for(const [id,key] of [['price','price'],['equity','equity'],['monthly','monthly']]){el(id).src='data:image/png;base64,'+d.charts[key];el(id).hidden=false}el('optimiser').innerHTML=d.optimization.length?d.optimization.map((r,i)=>'<tr><td>'+(i+1)+'</td><td>'+r.stats.total_return_pct+'</td><td>'+r.stats.max_drawdown_pct+'</td><td>'+r.stats.trades+'</td><td>'+r.stats.win_rate_pct+'</td><td>'+r.stats.profit_factor+'</td><td>'+JSON.stringify(r.params)+'</td></tr>').join(''):'<tr><td colspan="7">No optimisation results.</td></tr>';el('trades').innerHTML=d.trades.map(t=>'<tr><td>'+t.entry_time+'</td><td>'+money(t.entry_price)+'</td><td>'+t.qty+'</td><td>'+t.exit_time+'</td><td>'+money(t.exit_price)+'</td><td>'+money(t.net_pnl)+'</td><td>'+pct(t.return_pct)+'</td><td>'+t.reason+'</td></tr>').join('')||'<tr><td colspan="8">No trades.</td></tr>';el('testStatus').textContent='Complete';}catch(e){el('testStatus').textContent=e.message;el('summary').innerHTML='<h2>Tester error</h2><p class="neg">'+e.message+'</p>'}}
-async function refreshBot(){const d=await (await fetch('/api/status')).json();el('botStatus').textContent=d.active?'Running '+d.symbols.join(', ')+' · '+d.mode+' · '+(d.bar_interval||10)+'m · account '+d.account_id:'Stopped'}el('run').onclick=runTester;el('startBot').onclick=async()=>{el('botStatus').textContent='Starting…';const r=await fetch('/api/paper/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbols:['ANT'],acc_index:Number(el('account').value),bar_interval:Number(el('botInterval').value)})});const d=await r.json();el('botStatus').textContent=r.ok?'Running '+d.symbols.join(', ')+' · '+d.mode+' · '+(d.bar_interval||10)+'m · account '+d.account_id:(d.error||'Start failed')};el('stopBot').onclick=async()=>{await fetch('/api/paper/stop',{method:'POST'});refreshBot()};refreshBot();setInterval(refreshBot,5000);
+async function refreshBot(){const d=await (await fetch('/api/status')).json();if(d.bar_interval)el('botInterval').value=String(d.bar_interval);el('botStatus').textContent=d.active?'Running '+d.symbols.join(', ')+' · '+d.mode+' · '+(d.bar_interval||10)+'m · account '+d.account_id:'Stopped'}el('run').onclick=runTester;el('startBot').onclick=async()=>{el('botStatus').textContent='Starting…';const r=await fetch('/api/paper/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbols:['ANT'],acc_index:Number(el('account').value),bar_interval:Number(el('botInterval').value)})});const d=await r.json();el('botStatus').textContent=r.ok?'Running '+d.symbols.join(', ')+' · '+d.mode+' · '+(d.bar_interval||10)+'m · account '+d.account_id:(d.error||'Start failed')};el('stopBot').onclick=async()=>{await fetch('/api/paper/stop',{method:'POST'});refreshBot()};refreshBot();setInterval(refreshBot,5000);
 </script></body></html>'''
 
 
@@ -368,7 +352,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/backtest": self.send_json(do_backtest(payload))
             elif path == "/api/paper/start": self.send_json(start_bot([str(x) for x in payload.get("symbols", [])], int(payload.get("acc_index", 0)), int(payload.get("bar_interval", DEFAULT_BAR_INTERVAL))))
             elif path == "/api/risk": self.send_json(risk_json(**payload))
-            elif path == "/api/paper/stop": stop_bot(); stop_external_bot(); self.send_json(execution_status())
+            elif path == "/api/paper/stop": stop_external_bot(); self.send_json(execution_status())
             else: self.send_json({"error": "not found"}, 404)
         except Exception as exc:
             logging.exception("dashboard request failed")
@@ -388,7 +372,7 @@ def main() -> None:
         print("Paper execution is locked to TrdEnv.SIMULATE and starts only from the dashboard.")
         try: server.serve_forever()
         except KeyboardInterrupt: pass
-        finally: stop_bot(); server.server_close(); fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        finally: server.server_close(); fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 
 if __name__ == "__main__":

@@ -1,12 +1,16 @@
 import unittest
+import json
+import tempfile
 from datetime import datetime
+from pathlib import Path
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 
 from strategy_57pct import add_features, run, strategy_signal
-from minute_bars import aggregate_us_session
-from scripts.app_minute_interval_sweep import promotion_gate
+from minute_bars import MINUTE_INTERVALS, aggregate_us_session
+from scripts.app_minute_interval_sweep import parse_intervals, promotion_gate, promote_winner
 from scripts.research_scheduler import session_phase
 from competition_bot import CompetitionBot, MAX_OPEN_POSITIONS, count_open_positions
 
@@ -87,19 +91,38 @@ class GridStrategyTests(unittest.TestCase):
         self.assertEqual(len(complete), 1)
         self.assertEqual(len(live), 2)
 
+    def test_paper_and_research_intervals_are_one_to_ten_minutes(self):
+        self.assertEqual(MINUTE_INTERVALS, tuple(range(1, 11)))
+        self.assertEqual(parse_intervals(None), list(MINUTE_INTERVALS))
+        with self.assertRaises(ValueError):
+            parse_intervals("11")
+        with self.assertRaises(ValueError):
+            aggregate_us_session(pd.DataFrame(), 11)
+
     def test_promotion_gate_requires_profit_and_beats_current(self):
         winner = {"best": {"stats": {"trades": 2, "total_return_pct": 2.0}}}
-        self.assertEqual(promotion_gate(winner, completed_sessions=2), (True, "profitable candidate beats current active parameters"))
+        self.assertFalse(promotion_gate(winner, completed_sessions=2)[0])
         self.assertFalse(promotion_gate(winner, completed_sessions=1)[0])
         self.assertFalse(promotion_gate({"best": {"stats": {"trades": 1, "total_return_pct": 2.0}}}, completed_sessions=2)[0])
         self.assertFalse(promotion_gate({"best": {"stats": {"trades": 2, "total_return_pct": 0.0}}}, completed_sessions=2)[0])
         self.assertFalse(promotion_gate(winner, {"total_return_pct": 2.0}, 2)[0])
         self.assertTrue(promotion_gate(winner, {"total_return_pct": 1.0}, 2)[0])
 
+    def test_eligible_promotion_is_queued_for_broker_check(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pending = root / "pending_paper_strategy_promotion.json"
+            with patch("scripts.app_minute_interval_sweep.PENDING_PROMOTION_PATH", pending):
+                result = promote_winner({"interval": "8m", "params": {"grid_lookback": 52}, "run_id": "test"})
+            self.assertEqual(result["state"], "QUEUED_BROKER_CHECK")
+            payload = json.loads(pending.read_text())
+            self.assertEqual((payload["symbol"], payload["interval"], payload["mode"]), ("US.ANT", 8, "SIMULATE"))
+            self.assertFalse((root / "paper_bot_live_strategy.json").exists())
+
     def test_research_phases_use_us_eastern_market_hours(self):
         self.assertEqual(session_phase(pd.Timestamp("2026-01-05 12:00", tz="UTC").to_pydatetime()), "PREMARKET")
         self.assertEqual(session_phase(pd.Timestamp("2026-01-05 15:00", tz="UTC").to_pydatetime()), "RTH")
-        self.assertEqual(session_phase(pd.Timestamp("2026-01-05 22:00", tz="UTC").to_pydatetime()), "OFF_HOURS")
+        self.assertEqual(session_phase(pd.Timestamp("2026-01-05 22:00", tz="UTC").to_pydatetime()), "CLOSED")
 
     def test_open_position_limit_counts_positive_holdings(self):
         positions = pd.DataFrame({"code": ["US.ANT", "US.X", "US.Y", "US.Z"], "qty": [10, 0, 3, 1]})
