@@ -48,6 +48,7 @@ from quant_api import audit_api, risk_api, strategy_api
 from strategy_57pct import BASELINE, validate_strategy_params
 from trading_config import active_symbols, normalize_symbol, promotion_path, strategy_path
 from us_market_calendar import session_close, session_exit_time, session_phase
+from scripts.ai_exit_arbiter import AIExitArbiter
 
 
 ACTIVE_SYMBOLS = active_symbols()
@@ -126,6 +127,14 @@ class CompetitionBot:
             host="127.0.0.1",
             port=11111,
         )
+        self.ai_exit_arbiter = AIExitArbiter()
+        if hasattr(self, "quote") and hasattr(self, "trade") and self.quote and self.trade:
+            self.ai_exit_arbiter.start_background_evaluator(
+                quote_ctx=self.quote,
+                trade_ctx=self.trade,
+                symbols=self.symbols,
+                acc_id=self.acc_id,
+            )
 
     def _load_state(self) -> dict[str, Any]:
         source = self.state_path if self.state_path.exists() else LEGACY_STATE_PATH
@@ -213,11 +222,25 @@ class CompetitionBot:
             raise RuntimeError(f"configured account {self.acc_id} is {env}, not SIMULATE")
 
     def close(self) -> None:
+        if hasattr(self, "ai_exit_arbiter") and self.ai_exit_arbiter:
+            self.ai_exit_arbiter.stop_background_evaluator()
         self.quote.close()
         self.trade.close()
 
     def stop(self, *_: Any) -> None:
+        if hasattr(self, "ai_exit_arbiter") and self.ai_exit_arbiter:
+            self.ai_exit_arbiter.stop_background_evaluator()
         self.running = False
+
+    def get_snapshot_dict(self, symbol: str) -> dict[str, Any]:
+        """Fetch market snapshot dictionary for real-time micro-structure assessment."""
+        try:
+            ret, data = self.quote.get_market_snapshot([symbol])
+            if ret == RET_OK and not data.empty:
+                return data.iloc[0].to_dict()
+        except Exception as exc:
+            logging.debug("snapshot dict query failed for %s: %s", symbol, exc)
+        return {}
 
     def account_funds(self) -> float:
         kwargs = {"trd_env": TrdEnv.SIMULATE, "acc_id": self.acc_id} if self.acc_id else {"trd_env": TrdEnv.SIMULATE, "acc_index": self.acc_index}
@@ -476,8 +499,21 @@ class CompetitionBot:
                         continue
                     mark = self.record_position_mark(symbol, qty, avg)
                     risk_reason = self.risk_exit_reason(symbol, mark or 0.0, qty, avg, params)
-                    if risk_reason and not pending:
-                        self.submit(symbol, TrdSide.SELL, int(qty), risk_reason)
+                    snapshot = self.get_snapshot_dict(symbol)
+                    ai_reason = None
+                    if hasattr(self, "ai_exit_arbiter") and self.ai_exit_arbiter:
+                        ai_reason, _ = self.ai_exit_arbiter.check_exit(
+                            symbol=symbol,
+                            price=mark or 0.0,
+                            qty=qty,
+                            avg_cost=avg,
+                            snapshot=snapshot,
+                            peak_price=self.peak_prices.get(symbol, 0.0),
+                            params=params,
+                        )
+                    exit_trigger = risk_reason or ai_reason
+                    if exit_trigger and not pending:
+                        self.submit(symbol, TrdSide.SELL, int(qty), exit_trigger)
                         self.state["pending"][symbol] = "SELL"
                         self.peak_prices[symbol] = 0.0
                         self._save_state()
@@ -535,8 +571,20 @@ class CompetitionBot:
                     self.peak_prices[symbol] = max(self.peak_prices[symbol], price)
                     risk_reason = self.risk_exit_reason(symbol, price, qty, avg, params)
                     session_exit = self.session_exit_due() or bool(signal_data.get("session_exit", False))
-                    if risk_reason or session_exit or exit_signal:
-                        reason = risk_reason or ("SESSION_EXIT_30M_BEFORE_CLOSE" if session_exit else "GRID_EXIT")
+                    snapshot = self.get_snapshot_dict(symbol)
+                    ai_reason = None
+                    if hasattr(self, "ai_exit_arbiter") and self.ai_exit_arbiter:
+                        ai_reason, _ = self.ai_exit_arbiter.check_exit(
+                            symbol=symbol,
+                            price=price,
+                            qty=qty,
+                            avg_cost=avg,
+                            snapshot=snapshot,
+                            peak_price=self.peak_prices.get(symbol, 0.0),
+                            params=params,
+                        )
+                    if risk_reason or session_exit or exit_signal or ai_reason:
+                        reason = risk_reason or ai_reason or ("SESSION_EXIT_30M_BEFORE_CLOSE" if session_exit else "GRID_EXIT")
                         if session_exit:
                             self.mark_session_exit(symbol)
                         self.submit(symbol, TrdSide.SELL, int(qty), reason)
