@@ -582,6 +582,7 @@ class CompetitionBot:
                             snapshot=snapshot,
                             peak_price=self.peak_prices.get(symbol, 0.0),
                             params=params,
+                            candles=candles,
                         )
                     if risk_reason or session_exit or exit_signal or ai_reason:
                         reason = risk_reason or ai_reason or ("SESSION_EXIT_30M_BEFORE_CLOSE" if session_exit else "GRID_EXIT")

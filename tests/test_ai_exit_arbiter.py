@@ -200,6 +200,97 @@ class TestAIExitArbiter(unittest.TestCase):
 
         bot.submit.assert_called_once_with("US.MU", TrdSide.SELL, 154, "AI_TAKE_PROFIT_STALL")
 
+    def test_indicator_convergence_profit_lock(self):
+        """When fast EMA collapses into slow EMA and price converges to grid line, lock profit."""
+        import pandas as pd
+        closes = [100.0, 100.3, 100.7, 101.2, 101.4, 101.0, 100.5]
+        highs = [100.2, 100.5, 100.9, 101.4, 101.6, 101.2, 100.7]
+        lows = [99.8, 100.1, 100.5, 100.9, 101.1, 100.7, 100.2]
+        candles = pd.DataFrame({"close": closes, "high": highs, "low": lows})
+
+        snapshot = {
+            "bid_price": 100.50,
+            "ask_price": 100.55,
+            "bid_ask_ratio": 32.0,
+            "avg_price": 100.60,
+        }
+        params = {"grid_lookback": 10, "grid_intervals": 4, "take_profit_pct": 0.02}
+
+        # Trade entered at 100.0, reached 101.6 peak, currently at 100.5 (+0.50% profit)
+        reason, telemetry = self.arbiter.evaluate_indicator_convergence(
+            symbol="US.NVDA",
+            price=100.50,
+            qty=100,
+            avg_cost=100.0,
+            candles=candles,
+            snapshot=snapshot,
+            peak_price=101.60,
+            params=params,
+        )
+
+        self.assertEqual(reason, "AI_CONVERGENCE_PROFIT_LOCK")
+        self.assertGreaterEqual(telemetry["lcs_score"], 0.65)
+        self.assertGreater(telemetry["ema_decay_pct"], 50.0)
+
+    def test_indicator_convergence_loss_mitigation(self):
+        """When indicators converge rapidly downward on an underwater trade, cut early."""
+        import pandas as pd
+        closes = [100.0, 99.8, 99.6, 99.4, 99.2]
+        highs = [100.1, 99.9, 99.7, 99.5, 99.3]
+        lows = [99.7, 99.5, 99.3, 99.1, 98.9]
+        candles = pd.DataFrame({"close": closes, "high": highs, "low": lows})
+
+        snapshot = {
+            "bid_price": 99.20,
+            "ask_price": 99.25,
+            "bid_ask_ratio": 20.0,
+            "avg_price": 99.70,
+        }
+        params = {"grid_lookback": 5, "grid_intervals": 4}
+
+        reason, telemetry = self.arbiter.evaluate_indicator_convergence(
+            symbol="US.APP",
+            price=99.20,
+            qty=100,
+            avg_cost=100.0,
+            candles=candles,
+            snapshot=snapshot,
+            peak_price=100.0,
+            params=params,
+        )
+
+        self.assertEqual(reason, "AI_CONVERGENCE_LOSS_MITIGATION")
+        self.assertGreaterEqual(telemetry["lcs_score"], 0.65)
+
+    def test_healthy_trend_no_convergence(self):
+        """When fast EMA is expanding away from slow EMA above VWAP, no exit should trigger."""
+        import pandas as pd
+        closes = [100.0, 100.3, 100.6, 101.0, 101.5]
+        highs = [100.1, 100.4, 100.8, 101.2, 101.7]
+        lows = [99.9, 100.1, 100.5, 100.8, 101.3]
+        candles = pd.DataFrame({"close": closes, "high": highs, "low": lows})
+
+        snapshot = {
+            "bid_price": 101.50,
+            "ask_price": 101.55,
+            "bid_ask_ratio": 75.0,
+            "avg_price": 100.80,
+        }
+        params = {"grid_lookback": 5, "grid_intervals": 4}
+
+        reason, telemetry = self.arbiter.evaluate_indicator_convergence(
+            symbol="US.MU",
+            price=101.50,
+            qty=100,
+            avg_cost=100.0,
+            candles=candles,
+            snapshot=snapshot,
+            peak_price=101.50,
+            params=params,
+        )
+
+        self.assertIsNone(reason)
+
 
 if __name__ == "__main__":
     unittest.main()

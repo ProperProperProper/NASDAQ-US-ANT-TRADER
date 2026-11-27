@@ -157,6 +157,144 @@ class AIExitArbiter:
 
         return None, telemetry
 
+    def evaluate_indicator_convergence(
+        self,
+        symbol: str,
+        price: float,
+        qty: float,
+        avg_cost: float,
+        candles: Any,
+        snapshot: dict[str, Any],
+        peak_price: float = 0.0,
+        params: dict[str, Any] | None = None,
+    ) -> tuple[str | None, dict[str, Any]]:
+        """Evaluate multi-indicator convergence trajectories to detect loss inversion before it happens.
+
+        Quantifies rate of change, momentum compression (fast/slow EMA decay),
+        time-to-collision with grid boundaries, and order-book depth erosion.
+        """
+        if candles is None or not hasattr(candles, "__len__") or len(candles) < 5:
+            return None, {}
+        if qty <= 0 or avg_cost <= 0 or price <= 0:
+            return None, {}
+
+        params = params or {}
+        if peak_price <= 0:
+            peak_price = max(avg_cost, price)
+        peak_price = max(peak_price, price)
+
+        return_pct = ((price - avg_cost) / avg_cost) * 100.0
+
+        # 1. Momentum Compression: Fast EMA (3) vs Slow EMA (8)
+        c_momentum = 0.0
+        ema_decay = 0.0
+        diff_vel = 0.0
+        try:
+            closes = candles["close"].astype(float)
+            ema_fast = closes.ewm(span=3, adjust=False).mean()
+            ema_slow = closes.ewm(span=8, adjust=False).mean()
+            diff = ema_fast - ema_slow
+
+            peak_diff = float(diff.tail(5).max())
+            curr_diff = float(diff.iloc[-1])
+            prev_diff = float(diff.iloc[-2]) if len(diff) >= 2 else curr_diff
+            diff_vel = curr_diff - prev_diff
+            if peak_diff > 1e-4:
+                ema_decay = (peak_diff - curr_diff) / peak_diff
+            elif curr_diff < 0:
+                ema_decay = 1.0
+
+            # Convergence toward negative crossover:
+            if curr_diff < 0:
+                c_momentum = 1.0
+            elif diff_vel < 0 and ema_decay >= 0.45:
+                # Fast line is accelerating downwards into slow line
+                c_momentum = min(1.0, max(0.5, ema_decay))
+        except Exception as exc:
+            logging.debug("momentum convergence check failed: %s", exc)
+
+        # 2. Grid Boundary Convergence & Projected Time-To-Collision
+        c_grid = 0.0
+        bars_to_cross = 999.0
+        try:
+            grid_lookback = max(2, min(240, int(params.get("grid_lookback", 45))))
+            prior_high = float(candles["high"].astype(float).tail(grid_lookback).max())
+            prior_low = float(candles["low"].astype(float).tail(grid_lookback).min())
+            span = prior_high - prior_low
+            exit_mode = str(params.get("exit_mode", "any_grid_cross_down"))
+
+            if "lower_half" in exit_mode or "any_grid" in exit_mode:
+                exit_level = prior_low + span * 0.25
+            else:
+                exit_level = prior_low
+
+            curr_dist = price - exit_level
+            prev_dist = float(candles["close"].iloc[-2]) - exit_level if len(candles) >= 2 else curr_dist
+            grid_vel = curr_dist - prev_dist
+
+            if curr_dist <= 0:
+                c_grid = 1.0
+                bars_to_cross = 0.0
+            elif grid_vel < 0:
+                bars_to_cross = curr_dist / abs(grid_vel) if abs(grid_vel) > 1e-4 else 999.0
+                if bars_to_cross <= 1.8:
+                    c_grid = min(1.0, (2.0 - bars_to_cross) / 1.5)
+        except Exception as exc:
+            logging.debug("grid convergence check failed: %s", exc)
+
+        # 3. Price-to-VWAP Convergence
+        c_vwap = 0.0
+        vwap = float(snapshot.get("avg_price", price) or price)
+        dist_to_vwap_pct = ((price - vwap) / vwap) * 100.0 if vwap > 0 else 0.0
+        if dist_to_vwap_pct < 0.0:
+            c_vwap = min(1.0, abs(dist_to_vwap_pct) / 0.20)
+        elif dist_to_vwap_pct < 0.06 and peak_price > price:
+            c_vwap = 0.65
+
+        # 4. Order-Book Liquidity Inversion
+        c_book = 0.0
+        bid_ask_ratio = float(snapshot.get("bid_ask_ratio", 50.0) or 50.0)
+        if bid_ask_ratio < 38.0:
+            c_book = min(1.0, (42.0 - bid_ask_ratio) / 20.0)
+
+        # 5. Composite Loss Convergence Score (LCS)
+        lcs = (0.35 * c_momentum) + (0.30 * c_grid) + (0.20 * c_vwap) + (0.15 * c_book)
+
+        telemetry = {
+            "symbol": symbol,
+            "shares": qty,
+            "avg_cost": round(avg_cost, 4),
+            "current_price": round(price, 4),
+            "peak_price": round(peak_price, 4),
+            "return_pct": round(return_pct, 4),
+            "lcs_score": round(lcs, 4),
+            "c_momentum": round(c_momentum, 2),
+            "c_grid": round(c_grid, 2),
+            "c_vwap": round(c_vwap, 2),
+            "c_book": round(c_book, 2),
+            "ema_decay_pct": round(ema_decay * 100.0, 1),
+            "bars_to_grid_cross": round(bars_to_cross, 2),
+            "bid_ask_ratio": round(bid_ask_ratio, 2),
+            "dist_to_vwap_pct": round(dist_to_vwap_pct, 4),
+        }
+
+        # Trigger if composite loss convergence is elevated (>= 0.65)
+        if lcs >= 0.65:
+            if return_pct >= 0.10:
+                logging.info(
+                    "AI Exit Triggered [%s]: CONVERGENCE_PROFIT_LOCK (LCS: %.2f, Return: +%.2f%%, Momentum Decay: %.1f%%, Tau: %.1fb)",
+                    symbol, lcs, return_pct, ema_decay * 100.0, bars_to_cross,
+                )
+                return "AI_CONVERGENCE_PROFIT_LOCK", telemetry
+            else:
+                logging.info(
+                    "AI Exit Triggered [%s]: CONVERGENCE_LOSS_MITIGATION (LCS: %.2f, Return: %.2f%%, Momentum Decay: %.1f%%)",
+                    symbol, lcs, return_pct, ema_decay * 100.0,
+                )
+                return "AI_CONVERGENCE_LOSS_MITIGATION", telemetry
+
+        return None, telemetry
+
     def check_exit(
         self,
         symbol: str,
@@ -166,8 +304,9 @@ class AIExitArbiter:
         snapshot: dict[str, Any],
         peak_price: float = 0.0,
         params: dict[str, Any] | None = None,
+        candles: Any = None,
     ) -> tuple[str | None, dict[str, Any]]:
-        """Unified exit check: evaluates micro-structure first, then approved AI Gateway decisions."""
+        """Unified exit check: evaluates micro-structure first, then indicator convergence, then AI Gateway."""
         # 1. Wire-Speed Micro-Structure Guard (0ms)
         ms_reason, telemetry = self.evaluate_microstructure_exit(
             symbol=symbol,
@@ -182,7 +321,23 @@ class AIExitArbiter:
             self._record_decision_event(symbol, ms_reason, telemetry, source="microstructure")
             return ms_reason, telemetry
 
-        # 2. Approved Asynchronous AI Gateway Decision
+        # 2. Smart Indicator Convergence Toward Loss (Multi-Indicator Velocity Vector)
+        if candles is not None:
+            conv_reason, conv_telemetry = self.evaluate_indicator_convergence(
+                symbol=symbol,
+                price=price,
+                qty=qty,
+                avg_cost=avg_cost,
+                candles=candles,
+                snapshot=snapshot,
+                peak_price=peak_price,
+                params=params,
+            )
+            if conv_reason:
+                self._record_decision_event(symbol, conv_reason, conv_telemetry, source="indicator_convergence")
+                return conv_reason, conv_telemetry
+
+        # 3. Approved Asynchronous AI Gateway Decision
         with self._lock:
             approved = self._approved_ai_exits.pop(symbol, None)
 
